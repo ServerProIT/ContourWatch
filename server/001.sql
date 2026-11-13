@@ -1,0 +1,11 @@
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY, secret TEXT NOT NULL, name TEXT NOT NULL, grp TEXT NOT NULL, os TEXT NOT NULL, version TEXT NOT NULL, created INTEGER NOT NULL, last_seen INTEGER, measured INTEGER, latest TEXT, maintenance INTEGER NOT NULL DEFAULT 0, revoked INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS tokens(hash TEXT PRIMARY KEY, expires INTEGER NOT NULL, remaining INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS samples(device TEXT NOT NULL REFERENCES devices(id), batch TEXT NOT NULL, measured INTEGER NOT NULL, received INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(device,batch));
+CREATE INDEX IF NOT EXISTS samples_time ON samples(device,measured);
+CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, device TEXT NOT NULL REFERENCES devices(id), rule TEXT NOT NULL, title TEXT NOT NULL, started INTEGER NOT NULL, opened INTEGER, resolved INTEGER, ack INTEGER);
+CREATE UNIQUE INDEX IF NOT EXISTS active_rule ON events(device,rule) WHERE resolved IS NULL;
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS aggregates(device TEXT NOT NULL REFERENCES devices(id),hour INTEGER NOT NULL,ram_avg REAL,ram_max REAL,temp_max REAL,count INTEGER NOT NULL,PRIMARY KEY(device,hour));
+PRAGMA user_version=1;

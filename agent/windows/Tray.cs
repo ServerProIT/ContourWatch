@@ -1,0 +1,15 @@
+using System;using System.IO;using System.Drawing;using System.Windows.Forms;using System.ServiceProcess;using System.Diagnostics;using System.Web.Script.Serialization;
+class Tray {
+ [STAThread] static void Main(){bool created;using(var mutex=new System.Threading.Mutex(true,@"Local\ContourWatchTray",out created)){if(!created)return;Application.EnableVisualStyles();Application.Run(new TrayContext());}}
+ class TrayContext:ApplicationContext {
+  NotifyIcon icon;Timer timer;string statusPath=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),@"ContourWatch\public\status.json");
+  public TrayContext(){var menu=new ContextMenuStrip();menu.Items.Add("Состояние агента",null,(s,e)=>Show());menu.Items.Add("Открыть панель",null,(s,e)=>Open());menu.Items.Add("Настроить агент…",null,(s,e)=>Configure());menu.Items.Add(new ToolStripSeparator());menu.Items.Add("Закрыть значок в трее",null,(s,e)=>ExitThread());
+   var path=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"agent.ico");icon=new NotifyIcon{Icon=File.Exists(path)?new Icon(path):SystemIcons.Information,Text="Контур · агент",ContextMenuStrip=menu,Visible=true};icon.DoubleClick+=(s,e)=>Show();timer=new Timer{Interval=10000};timer.Tick+=(s,e)=>Update();timer.Start();Update();}
+  string Status(){try{return File.ReadAllText(statusPath);}catch{return "{\"state\":\"Состояние пока недоступно\"}";}}
+  void Update(){try{using(var svc=new ServiceController("ContourWatch")){icon.Text="Контур · "+(svc.Status==ServiceControllerStatus.Running?"Служба работает":"Служба остановлена");}}catch{icon.Text="Контур · служба не установлена";}}
+  void Show(){MessageBox.Show(Status(),"Контур · состояние агента",MessageBoxButtons.OK,MessageBoxIcon.Information);}
+  void Open(){try{var d=new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(Status());string url=d.ContainsKey("server")?Convert.ToString(d["server"]):"";Uri u;if(Uri.TryCreate(url,UriKind.Absolute,out u)&&u.Scheme=="https")Process.Start(new ProcessStartInfo(u.AbsoluteUri){UseShellExecute=true});else MessageBox.Show("Адрес панели ещё не получен. Настройте агент через установщик.");}catch{MessageBox.Show("Не удалось открыть панель.");}}
+  void Configure(){try{Process.Start(new ProcessStartInfo(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"ContourSetup.exe")){UseShellExecute=true,Verb="runas"});}catch{MessageBox.Show("Настройка отменена или установщик недоступен.");}}
+  protected override void ExitThreadCore(){timer.Stop();timer.Dispose();icon.Visible=false;icon.Dispose();base.ExitThreadCore();}
+ }
+}

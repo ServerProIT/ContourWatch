@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Контур — агент мониторинга
+Comment=Состояние службы ContourWatch
+Exec=/opt/contourwatch/tray-env/bin/python /opt/contourwatch/tray.py
+Icon=/opt/contourwatch/agent.svg
+Terminal=false
+Categories=System;Monitor;
+X-GNOME-Autostart-enabled=true
