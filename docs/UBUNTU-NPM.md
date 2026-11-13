@@ -167,6 +167,6 @@ sudo sh deploy/up.sh
 - **Пустая база после пересборки:** сравните DATA_VOLUME_NAME/`docker volume ls`; не регистрируйте парк заново до проверки старого volume.
 - **Недостаточно места:** проверьте `df -h`, размеры Docker volume/backup, политику истории и повторяемость raw SMART. Не удаляйте живую БД или WAL вручную.
 
-Версия 0.1.1 остаётся пилотной. Настройка тестировалась локальными автоматическими сценариями; реальная связка Proxmox→Ubuntu→NPM, сертификат, firewall и перезагрузка вашей ВМ требуют проверки на месте. Изменения этого этапа не включают безопасный автообновлятор агентов или квалификацию датчиков.
+Версия 0.1.1 остаётся пилотной. Локальные тесты и [проверка Docker на Ubuntu 24.04 в CI](https://github.com/ServerProIT/ContourWatch/actions/runs/43384195374) прошли, включая restart и backup/restore. Реальная связка Proxmox→ваша Ubuntu-ВМ→ваш NPM, сертификат, firewall и перезагрузка ВМ требуют проверки на месте. Изменения этого этапа не включают безопасный автообновлятор агентов или квалификацию датчиков.
 
 Источники: [NPM Setup](https://nginxproxymanager.com/setup/), [NPM proxy headers](https://github.com/NginxProxyManager/nginx-proxy-manager/blob/develop/docker/rootfs/etc/nginx/conf.d/include/proxy.conf), [Docker Ubuntu](https://docs.docker.com/engine/install/ubuntu/), [Docker Compose up](https://docs.docker.com/reference/cli/docker/compose/up/).

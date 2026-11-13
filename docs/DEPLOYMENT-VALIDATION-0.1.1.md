@@ -25,7 +25,7 @@ Docker Compose CLI **v5.7.1**, официальный release asset, SHA256 пр
 
 Добавлен `.github/workflows/verify.yml`: Ubuntu 24.04 runner, Node 24.11.1, API/proxy/backup tests, Linux portable tests, сборка/запуск Docker Compose, проверка контейнера и данных после restart, online backup shell-сценарием и восстановление в отдельный временный volume с запуском от непривилегированного пользователя. В CI используются только отдельные disposable volumes и тестовые данные; secrets проекта/инфраструктуры не нужны. Результаты запуска смотреть в [GitHub Actions](https://github.com/ServerProIT/ContourWatch/actions).
 
-На момент подготовки этого файла workflow ещё требуется выполнить после публикации. Само наличие workflow не означает успешный запуск.
+**Запуск прошёл успешно:** [GitHub Actions #43384195374](https://github.com/ServerProIT/ContourWatch/actions/runs/43384195374), commit `8c666e0f58def777cf6d70f6f1786124941272d4`, Ubuntu 24.04. В журнале подтверждены 70/70 серверных тестов, 15/15 Linux logic tests, Healthy контейнер, успешный restart с сохранением ключей/БД/учётных данных агента, online backup и восстановление в отдельный volume от непривилегированного пользователя. Тестовые ресурсы CI удалены после проверки.
 
 ## Что остаётся проверить на площадке
 
