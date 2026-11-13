@@ -5,7 +5,7 @@
 | .NET Framework 4.8 | Windows runtime | Microsoft; устанавливается отдельно официальным offline installer, не вложен |
 | Node.js 24.11.1 | Сервер | MIT + bundled third-party notices; устанавливается отдельно или Docker image |
 | SQLite, встроенный в Node | База | Public domain, учитывайте уведомления сборки Node |
-| Caddy | HTTPS proxy | Apache-2.0, отдельный официальный образ |
+| Nginx Proxy Manager | Внешний HTTPS proxy | Пользователь размещает отдельно; не включён в образ панели |
 | smartmontools | SMART adapter | GPL-2.0-or-later, не включён в Windows EXE, устанавливается отдельно; при будущей дистрибуции нужны соответствующие исходники/уведомления |
 | LibreHardwareMonitor | Необязательный Windows adapter | MPL-2.0 и лицензии зависимостей; не включён, выпуск/драйвер ещё не квалифицирован |
 | Python | Linux-агент | PSF License, системный пакет |

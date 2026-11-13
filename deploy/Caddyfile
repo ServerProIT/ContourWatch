@@ -1,5 +1,0 @@
-{$MONITOR_HOST} {
-    tls /etc/caddy/tls/server.crt /etc/caddy/tls/server.key
-    reverse_proxy server:8080
-    header Strict-Transport-Security "max-age=31536000"
-}

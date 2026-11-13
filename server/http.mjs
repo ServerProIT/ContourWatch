@@ -3,8 +3,11 @@ import {readFile} from 'node:fs/promises';
 import {resolve,extname} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {ApiError,equal,hash,fail} from './core.mjs';
-export function createApp(store,{adminKey,viewerKey,secureCookies=true,webRoot=resolve(import.meta.dirname,'../web'),demo=false}={}){
+import {publicOrigin,proxyIps,clientIp,version} from './config.mjs';
+export function createApp(store,{adminKey,viewerKey,secureCookies=true,publicUrl=null,trustedProxies=new Set(),webRoot=resolve(import.meta.dirname,'../web'),demo=false}={}){
  if(!adminKey||adminKey.length<24)throw Error('ADMIN_KEY: не менее 24 символов');
+ const origin=publicOrigin(publicUrl),trusted=trustedProxies instanceof Set?proxyIps([...trustedProxies].join(',')):proxyIps(trustedProxies);
+ if(origin&&!secureCookies)throw Error('Для внешнего HTTPS-адреса нужны Secure cookies');
  const sessions=new Map(),rates=new Map();
  const server=http.createServer(async(req,res)=>{
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Frame-Options','DENY');res.setHeader('Cache-Control','no-store');
@@ -12,11 +15,12 @@ export function createApp(store,{adminKey,viewerKey,secureCookies=true,webRoot=r
  const send=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value));};
  try{
  const url=new URL(req.url,'http://localhost'),path=url.pathname;
- if(req.method==='GET'&&path==='/health')return send(200,{ok:true,version:'0.1.0'});
+ if(req.method==='GET'&&path==='/health')return send(200,{ok:true,version});
+ if(req.method==='GET'&&path==='/ready'){try{store.one('SELECT name FROM sqlite_master LIMIT 1');return send(200,{ok:true,version});}catch{return send(503,{ok:false,error:'Хранилище недоступно'});}}
  if(path.startsWith('/api/')){
- const ip=req.socket.remoteAddress,now=Date.now();let rate=rates.get(ip);if(!rate||rate.until<now){rate={until:now+60000,n:0};rates.set(ip,rate);}if(++rate.n>6000)fail(429,'Слишком много запросов');
+ const ip=clientIp(req.socket.remoteAddress,req.headers['x-forwarded-for'],trusted),now=Date.now();let rate=rates.get(ip);if(!rate||rate.until<now){rate={until:now+60000,n:0};rates.set(ip,rate);}if(++rate.n>6000)fail(429,'Слишком много запросов');
  if(rates.size>4096)for(const [k,v]of rates)if(v.until<now)rates.delete(k);
- if(req.method!=='GET'&&req.headers.origin&&req.headers.origin!==`${secureCookies?'https':'http'}://${req.headers.host}`)fail(403,'Недопустимый источник запроса');
+ if(req.method!=='GET'&&req.headers.origin&&req.headers.origin!==(origin||`${secureCookies?'https':'http'}://${req.headers.host}`))fail(403,'Недопустимый источник запроса');
  let body={};if(req.method!=='GET'){if(!(req.headers['content-type']||'').startsWith('application/json'))fail(415,'Требуется application/json');let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>1048576)fail(413,'Пакет больше 1 МБ');chunks.push(chunk);}try{body=JSON.parse(Buffer.concat(chunks).toString()||'{}');}catch{fail(400,'Повреждён JSON');}if(!body||typeof body!=='object'||Array.isArray(body))fail(400,'Ожидается объект');}
  if(path==='/api/login'&&req.method==='POST'){
  // A separate low login budget protects access keys even behind a trusted proxy.

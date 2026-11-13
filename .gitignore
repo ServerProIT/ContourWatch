@@ -17,3 +17,9 @@ deploy/tls/
 config.json
 admin.key
 work/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+deploy/backups/
+.env.*
+!.env.example

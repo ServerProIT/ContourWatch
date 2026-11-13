@@ -1,38 +1,35 @@
+name: contourwatch
+
 services:
   server:
+    image: contourwatch:0.1.1
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    init: true
     restart: unless-stopped
+    stop_grace_period: 15s
     environment:
-      ADMIN_KEY: ${ADMIN_KEY:?Set ADMIN_KEY in .env (32+ random characters)}
-      VIEWER_KEY: ${VIEWER_KEY:?Set a separate VIEWER_KEY in .env}
+      PUBLIC_URL: ${PUBLIC_URL:?Set the external HTTPS URL in deploy/.env}
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-}
+    ports:
+      - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-8080}:8080"
     volumes:
       - contour-data:/data
-    expose:
-      - "8080"
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:size=16m,mode=1777
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
     mem_limit: 512m
-  proxy:
-    image: caddy:2.10.2-alpine
-    restart: unless-stopped
-    ports:
-      - "443:443"
-    environment:
-      MONITOR_HOST: ${MONITOR_HOST:-monitor.company.local}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./tls:/etc/caddy/tls:ro
-      - caddy-data:/data
-    depends_on:
-      server:
-        condition: service_healthy
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 volumes:
   contour-data:
-  caddy-data:
+    name: ${DATA_VOLUME_NAME:-contourwatch-data}
