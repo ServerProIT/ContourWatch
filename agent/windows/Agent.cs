@@ -13,15 +13,16 @@ using System.Security.Cryptography;
 using System.ServiceProcess;
 using System.Web.Script.Serialization;
 using Microsoft.Win32;
-[assembly:System.Reflection.AssemblyVersion("0.1.0.0")]
+[assembly:System.Reflection.AssemblyVersion("0.1.1.0")]
 namespace ContourWatch {
 public class Agent : ServiceBase {
- public const string Version="0.1.0";
+ public const string Version="0.1.1";
  public static JavaScriptSerializer Json { get { return new JavaScriptSerializer { MaxJsonLength=1048576,RecursionLimit=100 }; } }
  public static string Root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ContourWatch");
  Thread worker; readonly ManualResetEvent stop=new ManualResetEvent(false);
  public Agent(){ServiceName="ContourWatch";CanStop=true;AutoLog=false;}
- public static int Main(string[] args){try{Console.OutputEncoding=new UTF8Encoding(false);if(args.Contains("--test-sleep")){Thread.Sleep(30000);return 0;}ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
+ public static void ConfigureConsoleEncoding(){try{Console.OutputEncoding=new UTF8Encoding(false);}catch(IOException){}catch(System.Security.SecurityException){}}
+ public static int Main(string[] args){try{if(args.Length>0)ConfigureConsoleEncoding();if(args.Contains("--test-sleep")){Thread.Sleep(30000);return 0;}ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
   if(args.Length>0&&args[0]=="--test-config"){Root=Path.GetFullPath(args[1]);Directory.CreateDirectory(Root);Endpoint(args[2],"/health",true);SaveConfig(Obj("server",args[2],"token",Protect(Environment.GetEnvironmentVariable("CW_TEST_TOKEN")),"localTest",true,"name","E2E-WINDOWS","group","Test"));return 0;}
   if(args.Length>0&&args[0]=="--collect"){Console.Write(Json.Serialize(Collectors.Read(args[1])));return 0;}
   if(args.Length>0&&args[0]=="--self-test")return SelfTest();
@@ -29,7 +30,7 @@ public class Agent : ServiceBase {
   if(args.Contains("--once")){Directory.CreateDirectory(Root);var a=new Agent();a.Cycle(true);return 0;}
   if(args.Contains("--console")){var a=new Agent();Console.CancelKeyPress+=(s,e)=>{e.Cancel=true;a.stop.Set();};a.Loop();return 0;}
   ServiceBase.Run(new Agent());return 0;
- }catch(Exception e){Console.Error.WriteLine(e.GetType().Name+": "+e.Message);return 1;}}
+ }catch(Exception e){try{Directory.CreateDirectory(Root);Log("startup "+e.GetType().Name+": "+e.Message);}catch{}try{Console.Error.WriteLine(e.GetType().Name+": "+e.Message);}catch{}return 1;}}
  protected override void OnStart(string[] args){worker=new Thread(Loop){IsBackground=true};worker.Start();}
  protected override void OnStop(){stop.Set();if(worker!=null)worker.Join(5000);}
  public static string Iso(){return DateTime.UtcNow.ToString("o");}
