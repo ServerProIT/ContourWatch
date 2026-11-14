@@ -1,11 +1,17 @@
 $ErrorActionPreference = 'Stop'
 $project = Split-Path $PSScriptRoot -Parent
 $bin = Join-Path $project 'dist\windows-x64'
+$published = Join-Path $project 'downloads\windows-x64\ContourSetup.exe'
+$setupPath = if (Test-Path -LiteralPath $published) { $published } else { Join-Path $bin 'ContourSetup.exe' }
+if (Test-Path -LiteralPath $published) {
+    $expected = ((Get-Content (Join-Path $project 'downloads\windows-x64\SHA256SUMS.txt') -Raw).Trim() -split '\s+')[0]
+    if ((Get-FileHash -LiteralPath $published -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Published installer checksum mismatch' }
+}
 if (Get-Service ContourWatch -ErrorAction SilentlyContinue) { throw 'Use a clean disposable Windows VM: service already exists' }
 $tokenPath = Join-Path $env:RUNNER_TEMP 'contour-ci-enrollment.txt'
 [IO.File]::WriteAllText($tokenPath, 'CI-ONLY-UNUSED-REGISTRATION-TOKEN-0000000000000000')
 function Invoke-Setup([string[]]$Arguments) {
-    $process = Start-Process -FilePath "$bin\ContourSetup.exe" -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru
+    $process = Start-Process -FilePath $setupPath -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode) { throw "Setup failed with exit code $($process.ExitCode)" }
 }
 try {
@@ -32,6 +38,8 @@ try {
     if ((Get-Service ContourWatch).Status -ne 'Running') { throw 'Reinstall did not start service' }
     Write-Output 'PASS real SCM install, no-console service startup, worker status, restart, config persistence and reinstall'
 } finally {
+    $log = Join-Path $env:ProgramData 'ContourWatch\agent.log'
+    if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 10 }
     if (Get-Service ContourWatch -ErrorAction SilentlyContinue) { Invoke-Setup @('--silent', '--uninstall') }
     Remove-Item -LiteralPath $tokenPath -ErrorAction SilentlyContinue
 }
