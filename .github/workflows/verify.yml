@@ -18,6 +18,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Build Windows installer and run agent checks
         shell: powershell
         run: |
@@ -30,6 +31,10 @@ jobs:
           & .\dist\windows-x64\NoConsoleRegression.exe "$env:RUNNER_TEMP\no-console-result.txt"
           if ($LASTEXITCODE) { throw 'No-console regression failed' }
           Get-Content "$env:RUNNER_TEMP\no-console-result.txt"
+          & $csc /nologo /r:dist\windows-x64\ContourAgent.exe /r:System.ServiceProcess.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /out:dist\windows-x64\WindowsCollectorTests.exe tests\windows-collectors.cs
+          if ($LASTEXITCODE) { throw 'Collector tests compilation failed' }
+          & .\dist\windows-x64\WindowsCollectorTests.exe "$env:RUNNER_TEMP\contour-collector-tests"
+          if ($LASTEXITCODE) { throw 'Collector tests failed' }
       - name: Actual Windows service install and restart
         shell: powershell
         run: .\tests\windows-service.ps1

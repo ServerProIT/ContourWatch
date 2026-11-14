@@ -1,15 +1,18 @@
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {resolve,extname} from 'node:path';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {requestLogger,safeRoute} from './diagnostics.mjs';
 import {ApiError,equal,hash,fail} from './core.mjs';
 import {publicOrigin,proxyIps,clientIp,version} from './config.mjs';
-export function createApp(store,{adminKey,viewerKey,secureCookies=true,publicUrl=null,trustedProxies=new Set(),webRoot=resolve(import.meta.dirname,'../web'),demo=false}={}){
+export function createApp(store,{adminKey,viewerKey,secureCookies=true,publicUrl=null,trustedProxies=new Set(),webRoot=resolve(import.meta.dirname,'../web'),demo=false,logger=requestLogger}={}){
  if(!adminKey||adminKey.length<24)throw Error('ADMIN_KEY: не менее 24 символов');
  const origin=publicOrigin(publicUrl),trusted=trustedProxies instanceof Set?proxyIps([...trustedProxies].join(',')):proxyIps(trustedProxies);
  if(origin&&!secureCookies)throw Error('Для внешнего HTTPS-адреса нужны Secure cookies');
  const sessions=new Map(),rates=new Map();
  const server=http.createServer(async(req,res)=>{
+ const requestId=randomUUID(),started=Date.now();res.setHeader('X-Request-Id',requestId);
+ res.on('finish',()=>{if(res.statusCode>=400){try{logger({event:'request.rejected',requestId,status:res.statusCode,method:req.method,path:safeRoute(req.url),elapsedMs:Date.now()-started});}catch{}}});
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Frame-Options','DENY');res.setHeader('Cache-Control','no-store');
  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
  const send=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value));};

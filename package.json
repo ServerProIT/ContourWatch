@@ -1,1 +1,1 @@
-{"name":"contourwatch","version":"0.1.1","private":true,"type":"module","engines":{"node":">=24.11.0 <25"},"scripts":{"start":"node server/main.mjs","test":"node --test tests/*.test.mjs","demo":"node server/main.mjs --demo","load":"node tests/load.mjs","backup":"node server/backup.mjs"}}
+{"name":"contourwatch","version":"0.1.2","private":true,"type":"module","engines":{"node":">=24.11.0 <25"},"scripts":{"start":"node server/main.mjs","test":"node --test tests/*.test.mjs","demo":"node server/main.mjs --demo","load":"node tests/load.mjs","backup":"node server/backup.mjs"}}

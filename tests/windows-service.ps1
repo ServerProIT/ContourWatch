@@ -15,7 +15,28 @@ function Invoke-Setup([string[]]$Arguments) {
     if ($process.ExitCode) { throw "Setup failed with exit code $($process.ExitCode)" }
 }
 try {
+    $newSetupPath = $setupPath
+    $oldArchive = Join-Path $env:RUNNER_TEMP 'contour-old-fixture.zip'
+    $oldRoot = Join-Path $env:RUNNER_TEMP 'contour-old-fixture'
+    git -C $project archive --format=zip --output=$oldArchive e95787c975ea381eac8f023eaadc5636e2ba48c1 downloads/windows-x64/ContourSetup.exe
+    if ($LASTEXITCODE) { throw 'Old installer fixture unavailable' }
+    Expand-Archive -LiteralPath $oldArchive -DestinationPath $oldRoot -Force
+    $setupPath = Join-Path $oldRoot 'downloads\windows-x64\ContourSetup.exe'
     Invoke-Setup @('--silent', '--server=https://127.0.0.1:9', "--token-file=`"$tokenPath`"", '--name=CI-WINDOWS-SERVICE', '--group=CI')
+    $trayPath = Join-Path $env:ProgramFiles 'ContourWatch\ContourTray.exe'
+    $oldTray = Start-Process -FilePath $trayPath -WindowStyle Hidden -PassThru
+    Start-Sleep -Seconds 2
+    if ($oldTray.HasExited) { throw 'Old tray fixture did not remain running' }
+    $setupPath = $newSetupPath
+    Invoke-Setup @('--silent', '--server=https://127.0.0.1:9', "--token-file=`"$tokenPath`"", '--name=CI-WINDOWS-SERVICE', '--group=CI')
+    if (!$oldTray.HasExited) { throw 'Upgrade did not stop locked old tray' }
+    if (([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $env:ProgramFiles 'ContourWatch\ContourAgent.exe'))).FileVersion -ne '0.1.2.0') { throw 'Upgrade did not install expected agent version' }
+    $tray = Start-Process -FilePath $trayPath -WindowStyle Hidden -PassThru
+    Start-Sleep -Seconds 2
+    if ($tray.HasExited) { throw 'New tray did not remain running' }
+    Invoke-Setup @('--silent', '--server=https://127.0.0.1:9', "--token-file=`"$tokenPath`"", '--name=CI-WINDOWS-SERVICE', '--group=CI', '--reregister')
+    if ($tray.HasExited) { throw 'Config-only registration unnecessarily terminated tray' }
+    Write-Output 'PASS upgrade from 0.1.1 with running old tray and re-registration while new tray remains running'
     $service = Get-Service ContourWatch
     if ($service.Status -ne 'Running') { throw 'Service did not reach Running' }
     $imagePath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\ContourWatch').ImagePath

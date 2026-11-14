@@ -3,7 +3,8 @@ import {randomBytes,randomUUID,createHash,timingSafeEqual} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 export const hash=s=>createHash('sha256').update(s).digest('hex');
 export const equal=(a,b)=>{if(typeof a!=='string'||typeof b!=='string')return false;const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
-export const defaults={fastSeconds:60,volumeSeconds:300,smartSeconds:900,offlineSeconds:180,ramHigh:90,ramClear:85,tempHigh:85,tempClear:80,volumeHigh:90,volumeClear:85,holdSeconds:120,historyDays:30,aggregateDays:365,autoUpdate:true,updateWindowStart:0,updateWindowEnd:24};
+export const defaults={fastSeconds:60,volumeSeconds:300,smartSeconds:900,offlineSeconds:180,ramHigh:90,ramClear:85,tempHigh:85,tempClear:80,gpuHigh:85,gpuClear:80,volumeHigh:90,volumeClear:85,holdSeconds:120,historyDays:30,aggregateDays:365,autoUpdate:true,updateWindowStart:0,updateWindowEnd:24};
+export const capabilities={extendedSensors:true};
 export class ApiError extends Error{constructor(status,message){super(message);this.status=status;}}
 export const fail=(status,msg)=>{throw new ApiError(status,msg)};
 export function textField(x,n,max=200){if(typeof x!=='string'||!x.trim()||x.length>max||/[\x00-\x1f]/.test(x))fail(400,'Некорректное поле '+n);return x.trim();}
@@ -16,19 +17,21 @@ export function validate(p,now=Date.now()){
  for(const m of p.metrics){if(!m||typeof m!=='object'||Array.isArray(m))fail(400,'Метрика должна быть объектом');textField(m.id,'id',240);textField(m.name,'name');textField(m.source,'source',80);
  if(ids.has(m.id))fail(400,'Повторный id метрики');ids.add(m.id);
  if(!['ok','unsupported','denied','error','stale'].includes(m.state))fail(400,'Неизвестное состояние');
- if(!['ram','volume','temperature','fan','smart','collector'].includes(m.kind))fail(400,'Неизвестный тип');
+ if(!['ram','volume','temperature','fan','smart','collector','cpu_load','gpu_temperature','gpu_load','gpu_fan','gpu_memory_used','gpu_memory_total'].includes(m.kind))fail(400,'Неизвестный тип');
  if(m.state==='ok'&&(typeof m.value!=='number'||!Number.isFinite(m.value)))fail(400,'Нужен числовой показатель');
  if(m.state!=='ok'&&m.value!=null)fail(400,'Недоступная метрика не имеет значения');
  if(m.unit!=null&&(typeof m.unit!=='string'||m.unit.length>20))fail(400,'Некорректная единица');
  if(m.measuredAt&&(!Number.isFinite(Date.parse(m.measuredAt))||Date.parse(m.measuredAt)>t+300000))fail(400,'Время метрики некорректно');
  if(m.state==='ok'&&['ram','volume'].includes(m.kind)&&(m.value<0||m.value>100))fail(400,'Процент вне диапазона');
+ if(m.state==='ok'&&['cpu_load','gpu_load','gpu_fan'].includes(m.kind)&&(m.value<0||m.value>100))fail(400,'Процент вне диапазона');
+ if(m.state==='ok'&&['gpu_memory_used','gpu_memory_total'].includes(m.kind)&&m.value<0)fail(400,'Объём памяти отрицательный');
  } return t;
 }
 export function settingsPatch(p,current=defaults){
  if(!p||typeof p!=='object'||Array.isArray(p))fail(400,'Некорректные настройки');
- const bounds={fastSeconds:[30,3600],volumeSeconds:[60,86400],smartSeconds:[300,86400],offlineSeconds:[90,86400],ramHigh:[1,100],ramClear:[0,99],tempHigh:[30,120],tempClear:[0,119],volumeHigh:[1,100],volumeClear:[0,99],holdSeconds:[0,86400],historyDays:[1,365],aggregateDays:[1,3650],updateWindowStart:[0,23],updateWindowEnd:[1,24]};
+ const bounds={fastSeconds:[30,3600],volumeSeconds:[60,86400],smartSeconds:[300,86400],offlineSeconds:[90,86400],ramHigh:[1,100],ramClear:[0,99],tempHigh:[30,120],tempClear:[0,119],gpuHigh:[30,120],gpuClear:[0,119],volumeHigh:[1,100],volumeClear:[0,99],holdSeconds:[0,86400],historyDays:[1,365],aggregateDays:[1,3650],updateWindowStart:[0,23],updateWindowEnd:[1,24]};
  for(const [k,v]of Object.entries(p)){if(k==='autoUpdate'){if(typeof v!=='boolean')fail(400,'autoUpdate: boolean');}else if(!bounds[k]||!Number.isInteger(v)||v<bounds[k][0]||v>bounds[k][1])fail(400,'Недопустимая настройка '+k);}
- const s={...current,...p};for(const k of ['ram','temp','volume'])if(s[k+'Clear']>=s[k+'High'])fail(400,'Порог восстановления должен быть ниже порога срабатывания');
+ const s={...current,...p};for(const k of ['ram','temp','gpu','volume'])if(s[k+'Clear']>=s[k+'High'])fail(400,'Порог восстановления должен быть ниже порога срабатывания');
  if(s.updateWindowStart>=s.updateWindowEnd)fail(400,'Окно установки должно быть в пределах суток UTC');return s;
 }
 export class Store{
@@ -52,7 +55,7 @@ export class Store{
  if(now-t<=this.settings().offlineSeconds*1000&&!d.maintenance)this.evaluate(id,p,now);}
  this.aggregate(id,p,t);}
  this.run('UPDATE devices SET last_seen=? WHERE id=?',now,id);this.event(id,'offline',false,'Нет связи',now,0);
- return {accepted:true,duplicate:!result.changes,settings:this.settings()};});}
+ return {accepted:true,duplicate:!result.changes,settings:this.settings(),capabilities};});}
  event(device,rule,bad,title,now,hold=0){const e=this.one('SELECT * FROM events WHERE device=? AND rule=? AND resolved IS NULL',device,rule);
  if(bad){if(!e)this.run('INSERT INTO events(id,device,rule,title,started,opened) VALUES(?,?,?,?,?,?)',randomUUID(),device,rule,title,now,hold===0?now:null);else if(e.opened==null&&now-e.started>=hold*1000)this.run('UPDATE events SET opened=? WHERE id=?',now,e.id);}
  else if(e)this.run('UPDATE events SET resolved=? WHERE id=?',now,e.id);}
@@ -63,11 +66,11 @@ export class Store{
  this.event(id,'collector:'+m.id,false,'',now);
  let bad=false,title='',hold=s.holdSeconds;
  if(m.kind==='smart'){bad=m.value>0;title='Предупреждение SMART: '+m.name;hold=0;}
- else if(['ram','temperature','volume'].includes(m.kind)){const key={ram:'ram',temperature:'temp',volume:'volume'}[m.kind];bad=m.value>=(active?s[key+'Clear']:s[key+'High']);title={ram:'Высокое использование ОЗУ',temperature:'Повышенная температура',volume:'Том заполнен'}[m.kind]+': '+m.name;}
+ else if(['ram','temperature','gpu_temperature','volume'].includes(m.kind)){const key={ram:'ram',temperature:'temp',gpu_temperature:'gpu',volume:'volume'}[m.kind];bad=m.value>=(active?s[key+'Clear']:s[key+'High']);title={ram:'Высокое использование ОЗУ',temperature:'Повышенная температура CPU',gpu_temperature:'Повышенная температура GPU',volume:'Том заполнен'}[m.kind]+': '+m.name;}
  else continue;this.event(id,rule,bad,title,now,hold);}
  }
  tick(now=Date.now()){const s=this.settings();for(const d of this.all('SELECT id,last_seen,created,maintenance FROM devices WHERE revoked=0')){if(d.maintenance)continue;this.event(d.id,'offline',now-(d.last_seen||d.created)>s.offlineSeconds*1000,'Нет связи с устройством',now,0);}}
- devices(now=Date.now()){this.tick(now);return this.all('SELECT id,name,grp,os,version,last_seen,measured,latest,maintenance,revoked FROM devices ORDER BY name').map(d=>({...d,latest:d.latest?JSON.parse(d.latest):null,status:d.maintenance?'maintenance':!d.last_seen||now-d.last_seen>this.settings().offlineSeconds*1000?'offline':'online',problems:this.one('SELECT count(*) n FROM events WHERE device=? AND opened IS NOT NULL AND resolved IS NULL',d.id).n}));}
+ devices(now=Date.now()){this.tick(now);return this.all('SELECT id,name,grp,os,version,last_seen,measured,latest,maintenance,revoked FROM devices ORDER BY name').map(d=>({...d,latest:d.latest?JSON.parse(d.latest):null,status:d.revoked?'revoked':d.maintenance?'maintenance':!d.last_seen||now-d.last_seen>this.settings().offlineSeconds*1000?'offline':'online',problems:this.one('SELECT count(*) n FROM events WHERE device=? AND opened IS NOT NULL AND resolved IS NULL',d.id).n}));}
  history(id,limit=360){return this.all('SELECT measured,payload FROM samples WHERE device=? ORDER BY measured DESC LIMIT ?',id,limit).reverse().map(r=>JSON.parse(r.payload));}
  events(id){return this.all('SELECT * FROM events WHERE opened IS NOT NULL'+(id?' AND device=?':'')+' ORDER BY started DESC LIMIT 1000',...(id?[id]:[]));}
  maintain(id,on){if(typeof on!=='boolean')fail(400,'Нужно логическое значение');if(!this.run('UPDATE devices SET maintenance=? WHERE id=?',on?1:0,id).changes)fail(404,'Устройство не найдено');}
