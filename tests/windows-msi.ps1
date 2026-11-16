@@ -13,7 +13,7 @@ function Msi([string[]]$Arguments){$process=Start-Process -FilePath "$env:WINDIR
 function Healthy {
  (Get-Service ContourWatch).WaitForStatus('Running',[TimeSpan]::FromSeconds(35))
  $deadline=(Get-Date).AddSeconds(35)
- do{Start-Sleep -Seconds 1;$file=Join-Path $root 'public\status.json';if((Test-Path -LiteralPath $file) -and ((Get-Content -LiteralPath $file -Raw|ConvertFrom-Json).version -eq '0.2.0')){return}}while((Get-Date) -lt $deadline)
+ do{Start-Sleep -Seconds 1;$file=Join-Path $root 'public\status.json';if((Test-Path -LiteralPath $file) -and ((Get-Content -LiteralPath $file -Raw|ConvertFrom-Json).version -eq '0.2.0')){$recovery=(& "$env:WINDIR\System32\sc.exe" qfailure ContourWatch) -join "`n";if($recovery -match 'RESTART'){return}}}while((Get-Date) -lt $deadline)
  throw 'MSI service did not write current status'
 }
 try{

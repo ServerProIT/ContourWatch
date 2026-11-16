@@ -34,7 +34,7 @@ public class Agent : ServiceBase {
   if(args.Contains("--console")){var a=new Agent();Console.CancelKeyPress+=(s,e)=>{e.Cancel=true;a.stop.Set();};a.Loop();return 0;}
   ServiceBase.Run(new Agent());return 0;
  }catch(Exception e){try{Directory.CreateDirectory(Root);Log("startup "+e.GetType().Name+": "+e.Message);}catch{}try{Console.Error.WriteLine(e.GetType().Name+": "+e.Message);}catch{}return 1;}}
- protected override void OnStart(string[] args){worker=new Thread(Loop){IsBackground=true};worker.Start();}
+ protected override void OnStart(string[] args){worker=new Thread(()=>{try{string sc=Path.Combine(Environment.SystemDirectory,"sc.exe");Run(sc,"failure ContourWatch reset= 86400 actions= restart/10000/restart/30000/restart/60000",3000);Run(sc,"failureflag ContourWatch 1",3000);}catch(Exception e){AgentLog.Write("warning","service","recovery.configure.failed",e.GetType().Name);}Loop();}){IsBackground=true};worker.Start();}
  protected override void OnStop(){stop.Set();if(worker!=null)worker.Join(5000);}
  public static string Iso(){return DateTime.UtcNow.ToString("o");}
  public static Dictionary<string,object> Obj(params object[] a){var d=new Dictionary<string,object>();for(int i=0;i<a.Length;i+=2)d[(string)a[i]]=a[i+1];return d;}
