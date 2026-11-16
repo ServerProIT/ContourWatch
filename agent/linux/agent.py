@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 DEFAULTS = dict(fastSeconds=60, volumeSeconds=300, smartSeconds=900)
 STOP = threading.Event()
 
@@ -110,7 +110,23 @@ def parse_smart(raw, code, device):
                        temperature=raw.get('temperature', {}).get('current'),
                        powerOnHours=raw.get('power_on_time', {}).get('hours'),
                        reallocated=attrs.get(5), pending=attrs.get(197), uncorrectable=attrs.get(198),
-                       percentageUsed=nvme.get('percentage_used'), mediaErrors=nvme.get('media_errors'), raw=raw))
+                       percentageUsed=wear_percent(raw), mediaErrors=nvme.get('media_errors'), raw=raw))
+
+def wear_percent(raw):
+    value = raw.get('endurance_used', {}).get('current_percent')
+    if value is None:
+        value = raw.get('nvme_smart_health_information_log', {}).get('percentage_used')
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 255 else None
+
+
+def wear_metric(raw, code, device):
+    wear = wear_percent(raw)
+    return metric('wear:'+device, 'disk_wear', raw.get('model_name', device),
+                  'error' if code & 7 else 'ok' if wear is not None else 'unsupported',
+                  wear if wear is not None and not code & 7 else None, '%', 'smartctl',
+                  dict(diskId='disk:'+device, reason=None if wear is not None else
+                       'Накопитель или контроллер не сообщает процент износа; для HDD он обычно отсутствует'))
+
 
 def smart():
     exe = shutil.which('smartctl')
@@ -126,6 +142,7 @@ def smart():
         try:
             code, raw = command([exe, '-a', '-j', '-d', typ, name])
             result.append(parse_smart(raw, code, name))
+            result.append(wear_metric(raw, code, name))
         except Exception as e:
             result.append(metric('disk:'+name, 'smart', name, 'error', source='smartctl', details=type(e).__name__))
     return result or [metric('smart:unavailable', 'smart', 'Физические накопители', 'denied' if code & 2 else 'unsupported', source='smartctl')]
@@ -190,6 +207,8 @@ class Agent:
         self.queue.mkdir(exist_ok=True, mode=0o700)
         self.settings, self.cache, self.due, self.jobs = dict(DEFAULTS), {}, {}, {}
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        self.paused, self.disk_wear, self.next_control = False, False, 0
+        self.next_update, self.update_thread = 0, None
 
     def interval(self, kind):
         key = 'smartSeconds' if kind == 'smart' else 'volumeSeconds' if kind == 'volume' else 'fastSeconds'
@@ -207,6 +226,50 @@ class Agent:
             size -= f.stat().st_size
             f.unlink()
             logging.warning('queue limit: oldest sample dropped')
+
+    def poll_update(self, config, policy):
+        try:
+            import update
+            now = time.monotonic()
+            if not policy.get('enabled'):
+                update.STATUS = 'Автообновление выключено'
+                return
+            if now < self.next_update or self.update_thread and self.update_thread.is_alive():
+                return
+            if not update.allowed_hour(policy, dt.datetime.now(dt.timezone.utc).hour):
+                update.STATUS = 'Ожидание окна обновления'
+                return
+            self.next_update = now+3600+random.uniform(0,900)
+            self.update_thread = threading.Thread(target=update.check, args=(config,policy,self.root,VERSION,post), daemon=True)
+            self.update_thread.start()
+        except ImportError:
+            logging.warning('update module unavailable')
+
+    def control(self):
+        now = time.monotonic()
+        if now < self.next_control:
+            return
+        self.next_control = now+30
+        try:
+            config = json.loads((self.root/'config.json').read_text())
+            if not config.get('secret'):
+                return
+            reply = post(config, '/api/control', dict(version=VERSION, paused=self.paused and all(j.done() for j in self.jobs.values())))
+            paused = bool(reply.get('paused'))
+            if paused != self.paused:
+                self.cache.clear()
+                self.due.clear()
+            self.paused = paused
+            self.poll_update(config, reply.get('updates', {}))
+            self.disk_wear = bool(reply.get('capabilities', {}).get('diskWear'))
+            self.settings.update({k: reply['settings'][k] for k in DEFAULTS if k in reply.get('settings', {})})
+            if self.paused:
+                self.status('На паузе', config.get('server'))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                self.next_control = now+300
+        except (OSError, ValueError):
+            logging.debug('control unavailable')
 
     def deliver(self):
         config = json.loads((self.root/'config.json').read_text())
@@ -232,6 +295,10 @@ class Agent:
                 f.unlink()
                 continue
             reply = post(config, '/api/ingest', payload)
+            if reply.get('paused'):
+                self.paused = True
+                return
+            self.disk_wear = bool(reply.get('capabilities', {}).get('diskWear'))
             self.settings.update({k: reply['settings'][k] for k in DEFAULTS if k in reply.get('settings', {})})
             f.unlink()
         self.status('В сети', config.get('server'))
@@ -244,15 +311,23 @@ class Agent:
 
     def sample(self):
         return dict(batchId=str(uuid.uuid4()), measuredAt=iso(), version=VERSION,
-                    metrics=[m for ms in self.cache.values() for m in ms],
+                    metrics=[m for ms in self.cache.values() for m in ms if m['kind'] != 'disk_wear' or self.disk_wear],
                     hardware=dict(architecture=platform.machine(), virtual=virtual()),
-                    updateStatus='Автообновление: требуется подписанный канал; автоматическая установка пока не реализована')
+                    updateStatus=update_status())
 
     def run(self, once=False):
         next_send = next_delivery = 0
         failures = 0
         while not STOP.is_set():
             now = time.monotonic()
+            if not once:
+                self.control()
+                if self.paused:
+                    for kind in list(self.jobs):
+                        if self.jobs[kind].done():
+                            del self.jobs[kind]
+                    STOP.wait(1)
+                    continue
             for kind in DEFAULT_KINDS:
                 if once:
                     self.cache[kind] = child_collect(kind)
@@ -299,6 +374,14 @@ def child_collect(kind):
     except Exception as e:
         return [metric(kind+':collector', 'temperature' if kind == 'sensors' else kind,
                        kind, 'error', details=type(e).__name__)]
+
+def update_status():
+    try:
+        import update
+        return update.STATUS
+    except ImportError:
+        return 'Модуль обновления недоступен'
+
 
 def os_name():
     try:

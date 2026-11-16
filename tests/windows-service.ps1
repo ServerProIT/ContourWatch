@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $project = Split-Path $PSScriptRoot -Parent
 $bin = Join-Path $project 'dist\windows-x64'
 $published = Join-Path $project 'downloads\windows-x64\ContourSetup.exe'
-$setupPath = if (Test-Path -LiteralPath $published) { $published } else { Join-Path $bin 'ContourSetup.exe' }
+$setupPath = Join-Path $bin 'ContourSetup.exe'
 if (Test-Path -LiteralPath $published) {
     $expected = ((Get-Content (Join-Path $project 'downloads\windows-x64\SHA256SUMS.txt') -Raw).Trim() -split '\s+')[0]
     if ((Get-FileHash -LiteralPath $published -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Published installer checksum mismatch' }
@@ -30,7 +30,7 @@ try {
     $setupPath = $newSetupPath
     Invoke-Setup @('--silent', '--server=https://127.0.0.1:9', "--token-file=`"$tokenPath`"", '--name=CI-WINDOWS-SERVICE', '--group=CI')
     if (!$oldTray.HasExited) { throw 'Upgrade did not stop locked old tray' }
-    if (([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $env:ProgramFiles 'ContourWatch\ContourAgent.exe'))).FileVersion -ne '0.1.2.0') { throw 'Upgrade did not install expected agent version' }
+    if (([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $env:ProgramFiles 'ContourWatch\ContourAgent.exe'))).FileVersion -ne '0.2.0.0') { throw 'Upgrade did not install expected agent version' }
     $tray = Start-Process -FilePath $trayPath -WindowStyle Hidden -PassThru
     Start-Sleep -Seconds 2
     if ($tray.HasExited) { throw 'New tray did not remain running' }

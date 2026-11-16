@@ -1,6 +1,5 @@
-import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
+import {mkdirSync, readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {randomBytes} from 'node:crypto';
 import {isIP} from 'node:net';
 
 export const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -52,26 +51,6 @@ export function clientIp(peer, forwarded, trusted) {
   return current;
 }
 
-function accessKey(env, name, dataDir) {
-  const fileVariable = `${name}_FILE`;
-  if (env[name] && env[fileVariable]) throw Error(`${name}: выберите значение или ${fileVariable}, не оба`);
-  let key;
-  if (env[name]) key = env[name];
-  else if (env[fileVariable]) key = readFileSync(resolve(env[fileVariable]), 'utf8').trim();
-  else {
-    const file = resolve(dataDir, name === 'ADMIN_KEY' ? 'admin.key' : 'viewer.key');
-    if (!existsSync(file)) {
-      try { writeFileSync(file, randomBytes(32).toString('base64url'), {mode: 0o600, flag: 'wx'}); }
-      catch (error) { if (error.code !== 'EEXIST') throw error; }
-    }
-    key = readFileSync(file, 'utf8').trim();
-  }
-  if (typeof key !== 'string' || key.length < 24 || key.length > 1024 || /[\s\x00-\x1f]/.test(key)) {
-    throw Error(`${name}: нужен ключ 24–1024 символа без пробелов`);
-  }
-  return key;
-}
-
 export function loadConfig(env = process.env, cwd = process.cwd()) {
   const origin = publicOrigin(env.PUBLIC_URL);
   const trustedProxies = proxyIps(env.TRUSTED_PROXY_IPS);
@@ -80,10 +59,7 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('PORT: ожидается число 1–65535');
   const dataDir = resolve(cwd, env.DATA_DIR || 'data');
   mkdirSync(dataDir, {recursive: true, mode: 0o700});
-  const adminKey = accessKey(env, 'ADMIN_KEY', dataDir);
-  const viewerKey = accessKey(env, 'VIEWER_KEY', dataDir);
-  if (adminKey === viewerKey) throw Error('Ключ администратора должен отличаться от ключа наблюдателя');
-  return {dataDir, adminKey, viewerKey, publicUrl: origin, trustedProxies,
+  return {dataDir, publicUrl: origin, trustedProxies,
     secureCookies: Boolean(origin) || env.SECURE_COOKIES === '1',
     host: env.HOST || '127.0.0.1', port};
 }

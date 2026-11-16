@@ -23,3 +23,13 @@ Windows security to read sensors. No fan-control commands are issued by our work
 
 Qualification on Server 2012 is not claimed. Modern Windows hardware still requires
 an actual machine test; VM smoke tests cannot certify Ryzen/NVIDIA sensor readings.
+
+
+## smartmontools 7.5
+
+Official release: https://github.com/smartmontools/smartmontools/releases/tag/RELEASE_7_5
+
+Unmodified x64 smartctl.exe SHA-256: `b5db94e5082c042be44994b7a4fa8f7b5c8e713b2ab1c9a560d8f7a7995ea27d`.
+Original smartmontools-7.5.win32-setup.exe SHA-256: `896337fcc253220614cf8cdbd5cf2321c5aa326a37a04160a672a281e6104c70`.
+Corresponding source smartmontools-7.5.tar.gz SHA-256: `690b83ca331378da9ea0d9d61008c4b22dde391387b9bbad7f29387f2595f76e`.
+The exact source archive, COPYING, AUTHORS and drivedb.h accompany the Windows installation. smartctl is a separate GPL-2.0-or-later executable; no smartmontools code is linked into the agent. Only read-only discovery/SMART reporting is requested. No third-party installer runs during our build or agent startup.

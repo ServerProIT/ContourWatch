@@ -1,5 +1,5 @@
 #!/bin/sh
-# Online SQLite backup plus access keys/config. No service stop is required.
+# Online SQLite backup plus initial credentials/config. No service stop is required.
 set -eu
 umask 077
 deploy_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -13,11 +13,14 @@ stage=$(mktemp -d "$destination/.incomplete-XXXXXX")
 name="contour-$(date -u +%Y%m%dT%H%M%SZ)-$$.sqlite"
 docker compose exec -T server node server/backup.mjs --output "/data/backups/$name"
 docker compose cp "server:/data/backups/$name" "$stage/contour.db"
-docker compose cp server:/data/admin.key "$stage/admin.key"
-docker compose cp server:/data/viewer.key "$stage/viewer.key"
+for file in initial-admin.txt admin.key viewer.key; do
+  if docker compose exec -T server node -e 'process.exit(require("node:fs").existsSync("/data/"+process.argv[1])?0:1)' "$file"; then
+    docker compose cp "server:/data/$file" "$stage/$file"
+  fi
+done
 cp .env "$stage/deploy.env"
-chmod 600 "$stage/contour.db" "$stage/admin.key" "$stage/viewer.key" "$stage/deploy.env"
-(cd "$stage" && sha256sum contour.db admin.key viewer.key deploy.env > SHA256SUMS)
+chmod 600 "$stage/"*
+(cd "$stage" && sha256sum ./* > SHA256SUMS)
 final="$destination/contour-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mv -- "$stage" "$final"
 # Remove only the uniquely named temporary DB after its verified host copy exists.

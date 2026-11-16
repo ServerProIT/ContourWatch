@@ -2,7 +2,7 @@ name: Verify Ubuntu deployment
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
     paths-ignore: ['**/*.md']
   pull_request:
   workflow_dispatch:
@@ -13,7 +13,7 @@ permissions:
 jobs:
   windows-service:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -35,9 +35,16 @@ jobs:
           if ($LASTEXITCODE) { throw 'Collector tests compilation failed' }
           & .\dist\windows-x64\WindowsCollectorTests.exe "$env:RUNNER_TEMP\contour-collector-tests"
           if ($LASTEXITCODE) { throw 'Collector tests failed' }
+          & $csc /nologo /r:dist\windows-x64\ContourAgent.exe /r:System.ServiceProcess.dll /r:System.Web.Extensions.dll /out:dist\windows-x64\SmartUpdateTests.exe tests\windows-smart-update.cs
+          if ($LASTEXITCODE) { throw 'SMART/update tests compilation failed' }
+          & .\dist\windows-x64\SmartUpdateTests.exe
+          if ($LASTEXITCODE) { throw 'SMART/update tests failed' }
       - name: Actual Windows service install and restart
         shell: powershell
         run: .\tests\windows-service.ps1
+      - name: Actual MSI install, repair, upgrade and uninstall
+        shell: powershell
+        run: .\tests\windows-msi.ps1
   ubuntu:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -53,7 +60,11 @@ jobs:
         run: |
           node --test tests/*.test.mjs
           python3 tests/linux_test.py
+          python3 tests/linux_update_test.py
           for script in deploy/*.sh; do sh -n "$script"; done
+      - name: Actual systemd signed update and failed-start rollback
+        # Only synthetic fixtures and an ephemeral test key.
+        run: sudo --preserve-env=CI,RUNNER_TEMP python3 tests/linux-systemd-update.py
       - name: Start isolated Compose deployment
         run: |
           printf '%s\n' \

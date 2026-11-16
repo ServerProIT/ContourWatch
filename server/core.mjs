@@ -2,12 +2,14 @@ import {DatabaseSync} from 'node:sqlite';
 import {randomBytes,randomUUID,createHash,timingSafeEqual} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {management} from './management.mjs';
+import {platform,migratePlatform} from './platform.mjs';
+import {problems,seedProblems} from './problems.mjs';
 import {ApiError,fail,textField} from './errors.mjs';
 export {ApiError,fail,textField};
 export const hash=s=>createHash('sha256').update(s).digest('hex');
 export const equal=(a,b)=>{if(typeof a!=='string'||typeof b!=='string')return false;const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
 export const defaults={fastSeconds:60,volumeSeconds:300,smartSeconds:900,offlineSeconds:180,ramHigh:90,ramClear:85,tempHigh:85,tempClear:80,gpuHigh:85,gpuClear:80,volumeHigh:90,volumeClear:85,holdSeconds:120,historyDays:30,aggregateDays:365,autoUpdate:true,updateWindowStart:0,updateWindowEnd:24};
-export const capabilities={extendedSensors:true};
+export const capabilities={extendedSensors:true,diskWear:true,control:true};
 export function validate(p,now=Date.now()){
  if(!p||typeof p!=='object'||Array.isArray(p))fail(400,'Ожидается объект');
  textField(p.batchId,'batchId',80); const t=Date.parse(p.measuredAt);
@@ -17,7 +19,7 @@ export function validate(p,now=Date.now()){
  for(const m of p.metrics){if(!m||typeof m!=='object'||Array.isArray(m))fail(400,'Метрика должна быть объектом');textField(m.id,'id',240);textField(m.name,'name');textField(m.source,'source',80);
  if(ids.has(m.id))fail(400,'Повторный id метрики');ids.add(m.id);
  if(!['ok','unsupported','denied','error','stale'].includes(m.state))fail(400,'Неизвестное состояние');
- if(!['ram','volume','temperature','fan','smart','collector','cpu_load','gpu_temperature','gpu_load','gpu_fan','gpu_memory_used','gpu_memory_total'].includes(m.kind))fail(400,'Неизвестный тип');
+ if(!['ram','volume','temperature','fan','smart','collector','cpu_load','gpu_temperature','gpu_load','gpu_fan','gpu_memory_used','gpu_memory_total','disk_wear'].includes(m.kind))fail(400,'Неизвестный тип');
  if(m.state==='ok'&&(typeof m.value!=='number'||!Number.isFinite(m.value)))fail(400,'Нужен числовой показатель');
  if(m.state!=='ok'&&m.value!=null)fail(400,'Недоступная метрика не имеет значения');
  if(m.unit!=null&&(typeof m.unit!=='string'||m.unit.length>20))fail(400,'Некорректная единица');
@@ -25,6 +27,7 @@ export function validate(p,now=Date.now()){
  if(m.state==='ok'&&['ram','volume'].includes(m.kind)&&(m.value<0||m.value>100))fail(400,'Процент вне диапазона');
  if(m.state==='ok'&&['cpu_load','gpu_load','gpu_fan'].includes(m.kind)&&(m.value<0||m.value>100))fail(400,'Процент вне диапазона');
  if(m.state==='ok'&&['gpu_memory_used','gpu_memory_total'].includes(m.kind)&&m.value<0)fail(400,'Объём памяти отрицательный');
+ if(m.state==='ok'&&m.kind==='disk_wear'&&(m.value<0||m.value>255))fail(400,'Износ вне диапазона 0–255');
  } return t;
 }
 export function settingsPatch(p,current=defaults){
@@ -35,7 +38,7 @@ export function settingsPatch(p,current=defaults){
  if(s.updateWindowStart>=s.updateWindowEnd)fail(400,'Окно установки должно быть в пределах суток UTC');return s;
 }
 export class Store{
- constructor(file=':memory:'){this.db=new DatabaseSync(file);this.db.exec('PRAGMA busy_timeout=5000');this.db.exec(readFileSync(new URL('./001.sql',import.meta.url),'utf8'));if(!this.db.prepare('PRAGMA table_info(aggregates)').all().some(c=>c.name==='ram_count'))this.db.exec(readFileSync(new URL('./002.sql',import.meta.url),'utf8'));this.transaction(()=>{this.db.exec(readFileSync(new URL('./003.sql',import.meta.url),'utf8'));if(!this.one("SELECT value FROM settings WHERE key='groupsMigrated'")){for(const d of this.all('SELECT id,grp FROM devices')){const g=this.ensureGroup(d.grp);this.run('INSERT OR IGNORE INTO device_groups VALUES(?,?)',d.id,g.id);}this.run("INSERT INTO settings VALUES('groupsMigrated','true')");}});}
+ constructor(file=':memory:'){this.db=new DatabaseSync(file);this.db.exec('PRAGMA busy_timeout=5000');this.db.exec(readFileSync(new URL('./001.sql',import.meta.url),'utf8'));if(!this.db.prepare('PRAGMA table_info(aggregates)').all().some(c=>c.name==='ram_count'))this.db.exec(readFileSync(new URL('./002.sql',import.meta.url),'utf8'));this.transaction(()=>{this.db.exec(readFileSync(new URL('./003.sql',import.meta.url),'utf8'));if(!this.one("SELECT value FROM settings WHERE key='groupsMigrated'")){for(const d of this.all('SELECT id,grp FROM devices')){const g=this.ensureGroup(d.grp);this.run('INSERT OR IGNORE INTO device_groups VALUES(?,?)',d.id,g.id);}this.run("INSERT INTO settings VALUES('groupsMigrated','true')");}migratePlatform(this);seedProblems(this);});}
  close(){this.db.close();} run(q,...v){return this.db.prepare(q).run(...v);} one(q,...v){return this.db.prepare(q).get(...v);} all(q,...v){return this.db.prepare(q).all(...v);}
  transaction(fn){this.db.exec('BEGIN IMMEDIATE');try{const v=fn();this.db.exec('COMMIT');return v;}catch(e){this.db.exec('ROLLBACK');throw e;}}
  settings(){const r=this.one("SELECT value FROM settings WHERE key='global'");return {...defaults,...(r?JSON.parse(r.value):{})};}
@@ -48,7 +51,7 @@ export class Store{
  const id=requestedId||randomUUID(),secret=requestedSecret||randomBytes(32).toString('base64url');this.run('INSERT INTO devices(id,secret,name,grp,os,version,created) VALUES(?,?,?,?,?,?,?)',id,hash(secret),name,group,os,version,now);this.run('INSERT INTO device_groups VALUES(?,?)',id,this.ensureGroup(group).id);this.run('UPDATE tokens SET remaining=remaining-1 WHERE hash=?',hash(p.token));return {id,secret,settings:this.settings()};});}
  auth(id,secret){const d=this.one('SELECT * FROM devices WHERE id=?',id||'');if(!d||d.revoked||!equal(d.secret,hash(secret||'')))fail(401,'Учётные данные отозваны или неверны');return d;}
  ingest(id,p,now=Date.now()){const t=validate(p,now);return this.transaction(()=>{
- const d=this.one('SELECT * FROM devices WHERE id=?',id);if(!d||d.revoked)fail(401,'Устройство недоступно');
+ const d=this.one('SELECT * FROM devices WHERE id=?',id);if(!d||d.revoked)fail(401,'Устройство недоступно');if(d.paused){this.run('UPDATE devices SET control_seen=? WHERE id=?',now,id);return {accepted:true,paused:true,settings:this.settings(),capabilities};}
  const result=this.run('INSERT OR IGNORE INTO samples VALUES(?,?,?,?,?)',id,p.batchId,t,now,JSON.stringify(p));
  if(result.changes){if(!d.measured||t>d.measured){this.run('UPDATE devices SET measured=?,latest=?,version=? WHERE id=?',t,JSON.stringify(p),String(p.version||d.version).slice(0,40),id);
  // Replayed historical samples never open current alerts.
@@ -59,18 +62,11 @@ export class Store{
  event(device,rule,bad,title,now,hold=0){const e=this.one('SELECT * FROM events WHERE device=? AND rule=? AND resolved IS NULL',device,rule);
  if(bad){if(!e)this.run('INSERT INTO events(id,device,rule,title,started,opened) VALUES(?,?,?,?,?,?)',randomUUID(),device,rule,title,now,hold===0?now:null);else if(e.opened==null&&now-e.started>=hold*1000)this.run('UPDATE events SET opened=? WHERE id=?',now,e.id);}
  else if(e)this.run('UPDATE events SET resolved=? WHERE id=?',now,e.id);}
- evaluate(id,p,now){const s=this.settings(),seen=new Set();for(const m of p.metrics){const rule=m.kind+':'+m.id;seen.add(rule);const active=this.one('SELECT id FROM events WHERE device=? AND rule=? AND resolved IS NULL',id,rule);
- const interval=m.kind==='smart'?s.smartSeconds:m.kind==='volume'?s.volumeSeconds:s.fastSeconds;
- const fresh=now-Date.parse(m.measuredAt||p.measuredAt)<=Math.max(interval*2,180)*1000;
- if(m.state!=='ok'||!fresh){this.event(id,'collector:'+m.id,true,'Сбор недоступен: '+m.name,now,s.holdSeconds);continue;}
- this.event(id,'collector:'+m.id,false,'',now);
- let bad=false,title='',hold=s.holdSeconds;
- if(m.kind==='smart'){bad=m.value>0;title='Предупреждение SMART: '+m.name;hold=0;}
- else if(['ram','temperature','gpu_temperature','volume'].includes(m.kind)){const key={ram:'ram',temperature:'temp',gpu_temperature:'gpu',volume:'volume'}[m.kind];bad=m.value>=(active?s[key+'Clear']:s[key+'High']);title={ram:'Высокое использование ОЗУ',temperature:'Повышенная температура CPU',gpu_temperature:'Повышенная температура GPU',volume:'Том заполнен'}[m.kind]+': '+m.name;}
- else continue;this.event(id,rule,bad,title,now,hold);}
- }
- tick(now=Date.now()){const s=this.settings();for(const d of this.all('SELECT id,last_seen,created,maintenance FROM devices WHERE revoked=0')){if(d.maintenance)continue;this.event(d.id,'offline',now-(d.last_seen||d.created)>s.offlineSeconds*1000,'Нет связи с устройством',now,0);}}
- devices(now=Date.now()){this.tick(now);return this.all('SELECT id,name,grp,os,version,last_seen,measured,latest,maintenance,revoked FROM devices ORDER BY name').map(d=>{const groups=this.all('SELECT g.* FROM groups g JOIN device_groups dg ON dg.grp=g.id WHERE dg.device=? ORDER BY g.name',d.id);return {...d,groups,grp:groups.map(g=>g.name).join(', ')||'Без группы',latest:d.latest?JSON.parse(d.latest):null,status:d.revoked?'revoked':d.maintenance?'maintenance':!d.last_seen||now-d.last_seen>this.settings().offlineSeconds*1000?'offline':'online',problems:this.one('SELECT count(*) n FROM events WHERE device=? AND opened IS NOT NULL AND resolved IS NULL',d.id).n};});}
+ evaluate(id,p,now){return this.evaluateProblems(id,p,now);}
+ tick(now=Date.now()){for(const d of this.all('SELECT id FROM devices WHERE revoked=0 AND maintenance=0 AND paused=0'))this.evaluateProblems(d.id,null,now,true);}
+ decorate(d,now){if(!d)return null;const groups=this.all('SELECT g.* FROM groups g JOIN device_groups dg ON dg.grp=g.id WHERE dg.device=? ORDER BY g.name',d.id),counts={normal:0,warning:0,critical:0};for(const e of this.all('SELECT severity,count(*) n FROM events WHERE device=? AND opened IS NOT NULL AND resolved IS NULL GROUP BY severity',d.id))counts[e.severity]=e.n;return {...d,groups,grp:groups.map(g=>g.name).join(', ')||'Без группы',latest:d.latest?JSON.parse(d.latest):null,status:d.revoked?'revoked':d.paused?'paused':d.maintenance?'maintenance':!Math.max(d.last_seen||0,d.control_seen||0)||now-Math.max(d.last_seen||0,d.control_seen||0)>this.settings().offlineSeconds*1000?'offline':'online',problemCounts:counts,problems:d.paused||d.revoked||d.maintenance?0:Object.values(counts).reduce((a,b)=>a+b,0)};}
+ device(id,now=Date.now()){this.evaluateProblems(id,null,now,true);return this.decorate(this.one('SELECT id,name,grp,os,version,last_seen,measured,latest,maintenance,revoked,paused,control_seen,pause_confirmed FROM devices WHERE id=?',id),now);}
+ devices(now=Date.now()){this.tick(now);return this.all('SELECT id,name,grp,os,version,last_seen,measured,latest,maintenance,revoked,paused,control_seen,pause_confirmed FROM devices ORDER BY name').map(d=>this.decorate(d,now));}
  history(id,limit=360){return this.all('SELECT measured,payload FROM samples WHERE device=? ORDER BY measured DESC LIMIT ?',id,limit).reverse().map(r=>JSON.parse(r.payload));}
  events(id){return this.all('SELECT * FROM events WHERE opened IS NOT NULL'+(id?' AND device=?':'')+' ORDER BY started DESC LIMIT 1000',...(id?[id]:[]));}
  maintain(id,on){if(typeof on!=='boolean')fail(400,'Нужно логическое значение');if(!this.run('UPDATE devices SET maintenance=? WHERE id=?',on?1:0,id).changes)fail(404,'Устройство не найдено');}
@@ -80,4 +76,4 @@ export class Store{
  this.run('DELETE FROM samples WHERE measured<?',now-s.historyDays*86400000);this.run('DELETE FROM aggregates WHERE hour<?',now-s.aggregateDays*86400000);this.run('DELETE FROM tokens WHERE expires<? OR remaining=0',now);this.run('DELETE FROM events WHERE resolved IS NOT NULL AND resolved<?',now-s.aggregateDays*86400000);
  });}
 }
-Object.assign(Store.prototype,management);
+Object.assign(Store.prototype,management,platform,problems);

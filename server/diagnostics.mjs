@@ -1,9 +1,9 @@
 export function safeRoute(url = '/') {
   const path = url.split('?')[0];
-  if (['/health','/ready','/','/app.js','/styles.css','/icon.svg','/agent.svg'].includes(path)) return path;
-  if (/^\/api\/(login|logout|session|register|ingest|devices|events|settings|tokens)$/.test(path)) return path;
-  if (/^\/api\/(users(?:\/delete)?|groups(?:\/delete)?|preferences|audit|notifications(?:\/(channels|rules|delete|test|retry))?)$/.test(path)) return path;
-  if (/^\/api\/devices\/[a-f0-9-]{36}(?:\/(history|events|aggregates|maintenance|revoke|edit))?$/.test(path)) return path.replace(/[a-f0-9-]{36}/, ':device');
+  if (['/health','/ready','/','/app.js','/panel.js','/styles.css','/panel.css','/icon.svg','/agent.svg'].includes(path)) return path;
+  if (/^\/api\/(login|logout|session|password|register|ingest|control|updates|update\/check|devices|events|settings|tokens)$/.test(path)) return path;
+  if (/^\/api\/(users(?:\/(delete|enabled))?|problems(?:\/delete)?|groups(?:\/delete)?|preferences|audit|notifications(?:\/(channels|rules|delete|test|retry))?)$/.test(path)) return path;
+  if (/^\/api\/devices\/[a-f0-9-]{36}(?:\/(history|events|aggregates|maintenance|revoke|edit|pause))?$/.test(path)) return path.replace(/[a-f0-9-]{36}/, ':device');
   if (/^\/api\/events\/[a-f0-9-]{36}\/ack$/.test(path)) return '/api/events/:event/ack';
   return '/[unknown-route]';
 }

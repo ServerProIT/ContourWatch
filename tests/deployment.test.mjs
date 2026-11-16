@@ -17,7 +17,7 @@ function directory(t) {
   return dir;
 }
 async function app(t, options = {}) {
-  const store = new Store();
+  const store = new Store();await store.bootstrapAdmin({password:key});
   const server = createApp(store, {adminKey: key, secureCookies: true,
     publicUrl: 'https://monitor.example.test', ...options});
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -41,30 +41,8 @@ test('canonical HTTPS public URL is normalized', () => {
 for (const url of ['http://monitor.local', 'https://user:pass@host', 'https://host/panel', 'https://host?q=1', 'https://host#x', 'not a URL']) {
   test(`reject invalid PUBLIC_URL: ${url}`, () => assert.throws(() => publicOrigin(url), /PUBLIC_URL/));
 }
-test('persistent role keys survive restart and differ', t => {
-  const dir = directory(t), a = loadConfig({PUBLIC_URL: 'https://monitor.example.test'}, dir);
-  const b = loadConfig({}, dir);
-  assert.equal(a.adminKey, b.adminKey);
-  assert.equal(a.viewerKey, b.viewerKey);
-  assert.notEqual(a.adminKey, a.viewerKey);
-  assert.equal(a.secureCookies, true);
-  assert.equal(b.host, '127.0.0.1');
-  assert.equal(readFileSync(join(dir, 'data/admin.key'), 'utf8'), a.adminKey);
-});
-test('supports external key files without writing their values to default files', t => {
-  const dir = directory(t), file = join(dir, 'external.key');
-  writeFileSync(file, key + '\n');
-  const config = loadConfig({ADMIN_KEY_FILE: file}, dir);
-  assert.equal(config.adminKey, key);
-  assert.equal(existsSync(join(dir, 'data/admin.key')), false);
-});
-test('rejects duplicate, weak, conflicting, or missing access keys', t => {
-  const dir = directory(t);
-  assert.throws(() => loadConfig({ADMIN_KEY: key, VIEWER_KEY: key}, dir), /отличаться/);
-  assert.throws(() => loadConfig({ADMIN_KEY: 'short'}, dir), /ADMIN_KEY/);
-  assert.throws(() => loadConfig({ADMIN_KEY: key, ADMIN_KEY_FILE: '/unused'}, dir), /выберите/);
-  assert.throws(() => loadConfig({ADMIN_KEY_FILE: join(dir, 'absent')}, dir));
-});
+test('configuration creates no shared keys and ignores removed key variables',t=>{const dir=directory(t),config=loadConfig({ADMIN_KEY_FILE:'/not-used',PUBLIC_URL:'https://monitor.example.test'},dir);assert.equal(config.adminKey,undefined);assert.equal(config.viewerKey,undefined);assert.equal(existsSync(join(dir,'data/admin.key')),false);assert.equal(config.secureCookies,true);});
+
 test('rejects invalid ports and insecure cookies for HTTPS deployment', t => {
   const dir = directory(t);
   for (const port of ['0', '-1', '1.5', '65536', 'abc']) assert.throws(() => loadConfig({PORT: port}, dir), /PORT/);
@@ -96,7 +74,7 @@ test('multiple explicitly trusted proxies are walked right to left', () => {
 });
 test('login behind proxy uses PUBLIC_URL despite an internal Host and untrusted forwarded host/proto', async t => {
   const {base} = await app(t);
-  const response = await post(base, '/api/login', {key}, {
+  const response = await post(base, '/api/login', {username:'admin',password:key}, {
     Origin: 'https://monitor.example.test', 'X-Forwarded-Host': 'evil.invalid', 'X-Forwarded-Proto': 'http'
   });
   assert.equal(response.status, 200);
@@ -108,7 +86,7 @@ test('login behind proxy uses PUBLIC_URL despite an internal Host and untrusted 
 test('forged Host and forwarded headers cannot authorize a foreign Origin', async t => {
   const {base} = await app(t);
   for (const origin of ['https://evil.invalid', 'null', 'http://monitor.example.test']) {
-    const r = await post(base, '/api/login', {key}, {Origin: origin, Host: 'evil.invalid', 'X-Forwarded-Host': 'evil.invalid'});
+    const r = await post(base, '/api/login', {username:'admin',password:key}, {Origin: origin, Host: 'evil.invalid', 'X-Forwarded-Host': 'evil.invalid'});
     assert.equal(r.status, 403);
   }
 });
@@ -120,13 +98,13 @@ test('agent registration without browser Origin works behind HTTPS proxy', async
 test('trusted proxy separates login rate limits for different clients', async t => {
   const {base} = await app(t, {trustedProxies: proxyIps('127.0.0.1')});
   for (let i = 0; i < 20; i++) await post(base, '/api/login', {key: 'wrong'}, {'X-Forwarded-For': '203.0.113.7'});
-  assert.equal((await post(base, '/api/login', {key}, {'X-Forwarded-For': '203.0.113.7'})).status, 429);
-  assert.equal((await post(base, '/api/login', {key}, {'X-Forwarded-For': '203.0.113.8'})).status, 200);
+  assert.equal((await post(base, '/api/login', {username:'admin',password:key}, {'X-Forwarded-For': '203.0.113.7'})).status, 429);
+  assert.equal((await post(base, '/api/login', {username:'admin',password:key}, {'X-Forwarded-For': '203.0.113.8'})).status, 200);
 });
 test('changing XFF does not evade rate limiting for an untrusted direct peer', async t => {
   const {base} = await app(t);
   for (let i = 0; i < 20; i++) await post(base, '/api/login', {key: 'wrong'}, {'X-Forwarded-For': `203.0.113.${i}`});
-  assert.equal((await post(base, '/api/login', {key}, {'X-Forwarded-For': '198.51.100.8'})).status, 429);
+  assert.equal((await post(base, '/api/login', {username:'admin',password:key}, {'X-Forwarded-For': '198.51.100.8'})).status, 429);
 });
 test('readiness checks database and returns 503 after storage failure', async t => {
   const {base, store} = await app(t);
@@ -187,7 +165,7 @@ test('NPM-style reverse proxy preserves login/session flow', async t => {
   await new Promise(r => proxy.listen(0, '127.0.0.1', r));
   t.after(async () => { proxy.closeAllConnections(); await new Promise(r => proxy.close(r)); });
   const proxyUrl = `http://127.0.0.1:${proxy.address().port}`;
-  const response = await post(proxyUrl, '/api/login', {key}, {Origin: 'https://monitor.example.test'});
+  const response = await post(proxyUrl, '/api/login', {username:'admin',password:key}, {Origin: 'https://monitor.example.test'});
   assert.equal(response.status, 200);
   const cookie = response.headers.get('set-cookie').split(';')[0];
   assert.equal((await fetch(proxyUrl + '/api/devices', {headers: {cookie}})).status, 200);

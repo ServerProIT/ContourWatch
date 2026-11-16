@@ -64,9 +64,9 @@ export function notificationWorker(store,{config=null,send=sendMail}={}){
    store.queueNotifications(now);
    for(const q of store.all("SELECT * FROM notification_queue WHERE status='pending' AND next_try<=? ORDER BY created LIMIT 20",now)){
     if(stopped)break;
-    const c=store.channels().find(c=>c.id===q.channel),r=store.rules().find(r=>r.id===q.rule),e=q.event&&store.one('SELECT e.*,d.name,d.revoked,d.maintenance FROM events e JOIN devices d ON d.id=e.device WHERE e.id=?',q.event);
+    const c=store.channels().find(c=>c.id===q.channel),r=store.rules().find(r=>r.id===q.rule),e=q.event&&store.one('SELECT e.*,d.name,d.revoked,d.maintenance,d.paused FROM events e JOIN devices d ON d.id=e.device WHERE e.id=?',q.event);
     const membership=e?store.all('SELECT grp FROM device_groups WHERE device=?',e.device).map(g=>g.grp):[];
-    if(!c?.enabled||q.event&&(!r?.enabled||!r.channels.includes(q.channel)||!e||e.revoked||e.maintenance||q.phase==='open'&&e.resolved||r.devices.length&&!r.devices.includes(e.device)||r.groups.length&&!r.groups.some(g=>membership.includes(g))||!r.kinds.includes(e.rule.split(':')[0])||r.metricId&&r.metricId!==e.rule.slice(e.rule.indexOf(':')+1)||q.phase==='recovery'&&!r.recovery)){
+    if(!c?.enabled||q.event&&(!r?.enabled||!r.channels.includes(q.channel)||!e||e.revoked||e.maintenance||e.paused||r.problemRules?.length&&!r.problemRules.includes(e.problem_rule)||q.phase==='open'&&e.resolved||r.devices.length&&!r.devices.includes(e.device)||r.groups.length&&!r.groups.some(g=>membership.includes(g))||!r.problemRules?.length&&!r.kinds.includes(e.kind||e.rule.split(':')[0])||r.metricId&&r.metricId!==(e.metric_id||e.rule.slice(e.rule.indexOf(':')+1))||q.phase==='recovery'&&!r.recovery)){
      store.run("UPDATE notification_queue SET status='cancelled' WHERE id=?",q.id);continue;
     }
     if(!config){store.run("UPDATE notification_queue SET error='SMTP_NOT_CONFIGURED',next_try=? WHERE id=?",now+60000,q.id);continue;}

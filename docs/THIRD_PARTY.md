@@ -6,7 +6,7 @@
 | Node.js 24.11.1 | Сервер | MIT + bundled third-party notices; устанавливается отдельно или Docker image |
 | SQLite, встроенный в Node | База | Public domain, учитывайте уведомления сборки Node |
 | Nginx Proxy Manager | Внешний HTTPS proxy | Пользователь размещает отдельно; не включён в образ панели |
-| smartmontools | SMART adapter | GPL-2.0-or-later, не включён в Windows EXE, устанавливается отдельно; при будущей дистрибуции нужны соответствующие исходники/уведомления |
+| smartmontools | SMART adapter | GPL-2.0-or-later; неизменённый smartctl 7.5 x64 включён в Windows-поставку с COPYING/AUTHORS, базой и точными исходниками; на Linux системный пакет |
 | LibreHardwareMonitor 0.9.6 | Изолированные CPU/motherboard sensors | Неизменённый официальный архив включён; MPL-2.0 и условия зависимостей, исходники/уведомления в [vendor](../vendor/README.md). Реальное оборудование требует проверки |
 | PawnIO | Доступ к CPU/плате | Установщик и kernel driver не включены; официальный подписанный выпуск устанавливается отдельно с pawnio.eu. Уведомления встроенных модулей LHM сохранены |
 | NVIDIA nvidia-smi | Независимый GPU collector | Не включён; штатный инструмент установленного драйвера, выполняются только read-only queries |

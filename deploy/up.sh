@@ -7,5 +7,5 @@ docker compose version >/dev/null
 docker compose config --quiet
 docker compose up -d --build --wait --wait-timeout 120
 docker compose ps
-echo 'Проверьте внешний HTTPS-адрес через Nginx Proxy Manager. Ключ администратора:'
-echo 'cd deploy && sudo docker compose exec server cat /data/admin.key'
+echo 'Проверьте внешний HTTPS-адрес через Nginx Proxy Manager. Начальные данные новой установки (существующий аккаунт сохраняется):'
+echo 'cd deploy && sudo docker compose exec server cat /data/initial-admin.txt'
