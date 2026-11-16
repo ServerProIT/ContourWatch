@@ -25,6 +25,8 @@ try{
  $public=[IO.File]::ReadAllText((Join-Path $project 'agent\update-public.xml'))
  $verify=New-Object Security.Cryptography.RSACryptoServiceProvider
  try{$verify.FromXmlString($public);$signature=$rsa.SignData($bytes,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1);if(!$verify.VerifyData($bytes,[Security.Cryptography.CryptoConfig]::MapNameToOID('SHA256'),$signature)){throw 'Signing key does not match pinned public key'}}finally{$verify.Dispose()}
+ $linuxVerify=[Security.Cryptography.RSA]::Create()
+ try{$linuxVerify.ImportFromPem([IO.File]::ReadAllText((Join-Path $project 'agent\linux\update-public.pem')));if(!$linuxVerify.VerifyData($bytes,$signature,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1)){throw 'Linux public key mismatch'}}finally{$linuxVerify.Dispose()}
  [IO.File]::WriteAllBytes((Join-Path $output 'manifest.json'),$bytes)
  [IO.File]::WriteAllText((Join-Path $output 'manifest.sig'),[Convert]::ToBase64String($signature),$utf8)
 }finally{[Array]::Clear($privateBytes,0,$privateBytes.Length);$rsa.Dispose()}

@@ -2,7 +2,7 @@ using System;using System.IO;using System.Text;using System.Reflection;using Sys
 class SmartUpdateTests {
  static void Require(bool ok,string why){if(!ok)throw new Exception(why);}
  static void Reject(Action action,string why){try{action();}catch{return;}throw new Exception("Accepted "+why);}
- static int Main(){try{
+ static int Main(string[] args){try{
   var nvme=Agent.Json.Deserialize<Dictionary<string,object>>(@"{""smart_status"":{""passed"":true},""nvme_smart_health_information_log"":{""percentage_used"":127}}");
   var list=SmartCollector.Parse(nvme,0,"/dev/nvme0");Require(list.Count==2&&list[1]["kind"].ToString()=="disk_wear"&&Convert.ToDouble(list[1]["value"])==127,"NVMe wear >100");
   var ata=Agent.Json.Deserialize<Dictionary<string,object>>(@"{""endurance_used"":{""current_percent"":23},""ata_smart_attributes"":{""table"":[{""id"":202,""value"":77}]}}");Require(SmartCollector.Wear(ata)==23,"canonical ATA endurance");
@@ -20,6 +20,7 @@ class SmartUpdateTests {
    manifest["expires"]=DateTime.UtcNow.AddDays(3).ToString("o");((Dictionary<string,object>)((Dictionary<string,object>)manifest["artifacts"])["windows-x64"])["name"]="../../evil.exe";text=Agent.Json.Serialize(manifest);Reject(()=>verify(text,sign(text),"0.2.0"),"arbitrary artifact path");
    Reject(()=>UpdateSecurity.Verify(text,sign(text),"windows-x64","0.2.0"),"untrusted signing key");
   }
+  if(args.Length==1){string release=args[0];var actual=UpdateSecurity.Verify(File.ReadAllText(Path.Combine(release,"manifest.json")),File.ReadAllText(Path.Combine(release,"manifest.sig")),"windows-x64","0.1.0");Require(actual!=null&&UpdateSecurity.Digest(Path.Combine(release,Convert.ToString(actual["name"])))==Convert.ToString(actual["sha256"]),"actual production package signature/hash");Console.WriteLine("PASS actual production package signature and hash with embedded public key");}
   Console.WriteLine("PASS NVMe/ATA/HDD wear, SMART failure, pinned signatures, tampering, expiry, downgrade and artifact path");return 0;
  }catch(Exception e){Console.Error.WriteLine(e.Message);return 1;}}
 }

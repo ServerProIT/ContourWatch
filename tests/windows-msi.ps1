@@ -57,5 +57,6 @@ try{
  if($before -and [IO.File]::ReadAllText($config) -ne $before){throw 'MSI uninstall removed identity'}
  Write-Output 'PASS MSI install, SMART payload, private ACL, repair, major upgrade, service startup and uninstall with identity preserved'
 }finally{
+ if(Test-Path -LiteralPath "$root\updates\updater.log"){Get-Content -LiteralPath "$root\updates\updater.log" -Encoding UTF8}
  if(Get-Service ContourWatch -ErrorAction SilentlyContinue){Msi @('/x',"`"$msi`"",'/qn','/norestart')}
 }

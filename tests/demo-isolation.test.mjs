@@ -1,0 +1,10 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {mkdtempSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';import {join,resolve} from 'node:path';import {createServer} from 'node:net';import {spawn} from 'node:child_process';import {once} from 'node:events';import {Store} from '../server/core.mjs';
+test('demo uses separate initial credentials and never changes production account or database',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'contour-demo-isolation-')),file=join(dir,'contour.db'),s=new Store(file);await s.bootstrapAdmin({password:'synthetic-production-password'});const before=s.one("SELECT password FROM users WHERE role='admin'").password;s.close();writeFileSync(join(dir,'initial-admin.txt'),'existing protected file',{mode:0o600});
+ const socket=createServer();await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
+ const child=spawn(process.execPath,['server/main.mjs','--demo'],{cwd:resolve(import.meta.dirname,'..'),env:{...process.env,HOST:'127.0.0.1',PORT:String(port),DATA_DIR:dir,PUBLIC_URL:'',SECURE_COOKIES:'0',SMTP_HOST:''},stdio:['ignore','pipe','pipe']});let timeout;child.stderr.resume();
+ try{await new Promise((resolve,reject)=>{let text='';timeout=setTimeout(()=>reject(Error('Demo startup timeout')),20000);child.stdout.on('data',b=>{text+=b.toString();if(text.includes('Слушает http://'))resolve();});child.once('exit',code=>reject(Error('Demo exited: '+code)));});assert.equal((await fetch('http://127.0.0.1:'+port+'/ready')).status,200);assert.ok(existsSync(join(dir,'demo-initial-admin.txt')));assert.equal(readFileSync(join(dir,'initial-admin.txt'),'utf8'),'existing protected file');}
+ finally{clearTimeout(timeout);if(child.exitCode===null){const exited=once(child,'exit');child.kill();await exited;}const production=new Store(file);try{assert.equal(production.one("SELECT password FROM users WHERE role='admin'").password,before);assert.equal(production.devices().length,0);}finally{production.close();rmSync(dir,{recursive:true,force:true});}}
+});

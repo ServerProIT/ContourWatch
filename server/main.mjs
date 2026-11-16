@@ -7,7 +7,7 @@ import {mailConfig,notificationWorker} from './mail.mjs';
 const config = loadConfig();
 const demo = process.argv.includes('--demo');
 const store = new Store(resolve(config.dataDir, demo ? 'demo.db' : 'contour.db'));
-await store.bootstrapAdmin({credentialsFile:resolve(config.dataDir,'initial-admin.txt')});
+await store.bootstrapAdmin({credentialsFile:resolve(config.dataDir,demo?'demo-initial-admin.txt':'initial-admin.txt')});
 let demoTimer;
 if (demo) {
   const {seedDemo, advanceDemo} = await import('./seed.mjs');
@@ -24,7 +24,7 @@ server.listen(config.port, config.host, () => {
   console.log(`ContourWatch ${version}${demo ? ' [ДЕМО]' : ''}`);
   console.log(`Слушает http://${config.host}:${config.port}`);
   if (config.publicUrl) console.log(`Панель: ${config.publicUrl}`);
-  console.log('Вход по логину и паролю. При первом запуске начальные данные сохраняются в DATA_DIR/initial-admin.txt; содержимое в журнал не выводится.');
+  console.log('Вход по логину и паролю. Начальные данные новой установки: DATA_DIR/'+(demo?'demo-initial-admin.txt':'initial-admin.txt')+'; содержимое в журнал не выводится.');
 });
 const tick = setInterval(() => {
   try { store.tick(); } catch (e) { console.error('Event evaluation:', e.name); }
