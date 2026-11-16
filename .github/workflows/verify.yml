@@ -43,7 +43,7 @@ jobs:
         shell: powershell
         run: .\tests\windows-service.ps1
       - name: Actual MSI install, repair, upgrade and uninstall
-        shell: powershell
+        shell: pwsh
         run: .\tests\windows-msi.ps1
   ubuntu:
     runs-on: ubuntu-24.04
