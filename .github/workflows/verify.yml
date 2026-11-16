@@ -45,6 +45,13 @@ jobs:
       - name: Actual MSI install, repair, upgrade and uninstall
         shell: pwsh
         run: .\tests\windows-msi.ps1
+      - name: MSI diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path "$env:RUNNER_TEMP\contour-msi-*.log" -ErrorAction SilentlyContinue | ForEach-Object {
+            Select-String -LiteralPath $_.FullName -Pattern 'Error |Return value 3|LaunchConditions' -Context 4,8 | Select-Object -Last 15 | ForEach-Object { $_.ToString() }
+          }
   ubuntu:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
