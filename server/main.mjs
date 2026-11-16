@@ -2,6 +2,7 @@ import {resolve} from 'node:path';
 import {Store} from './core.mjs';
 import {createApp} from './http.mjs';
 import {loadConfig, version} from './config.mjs';
+import {mailConfig,notificationWorker} from './mail.mjs';
 
 const config = loadConfig();
 const demo = process.argv.includes('--demo');
@@ -14,7 +15,10 @@ if (demo) {
     try { advanceDemo(store); } catch (e) { console.error('Demo:', e.name); }
   }, 15000);
 }
-const server = createApp(store, {...config, demo});
+const smtp=mailConfig();
+const notifications=notificationWorker(store,{config:smtp});
+const notificationTimer=setInterval(()=>{notifications.run().catch(e=>console.error('Notifications:',e.name));},15000);
+const server = createApp(store, {...config, demo,smtpConfigured:!!smtp});
 server.listen(config.port, config.host, () => {
   console.log(`ContourWatch ${version}${demo ? ' [ДЕМО]' : ''}`);
   console.log(`Слушает http://${config.host}:${config.port}`);
@@ -34,9 +38,11 @@ function stop() {
   clearInterval(tick);
   clearInterval(prune);
   clearInterval(demoTimer);
-  server.close(() => { store.close(); process.exit(0); });
+  clearInterval(notificationTimer);
+  const drained=notifications.stop();
+  server.close(async () => { await drained;store.close(); process.exit(0); });
   server.closeIdleConnections();
-  setTimeout(() => { server.closeAllConnections(); process.exit(1); }, 10000).unref();
+  setTimeout(() => { server.closeAllConnections(); process.exit(1); }, 40000).unref();
 }
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

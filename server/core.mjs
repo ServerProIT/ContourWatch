@@ -1,13 +1,13 @@
 import {DatabaseSync} from 'node:sqlite';
 import {randomBytes,randomUUID,createHash,timingSafeEqual} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {management} from './management.mjs';
+import {ApiError,fail,textField} from './errors.mjs';
+export {ApiError,fail,textField};
 export const hash=s=>createHash('sha256').update(s).digest('hex');
 export const equal=(a,b)=>{if(typeof a!=='string'||typeof b!=='string')return false;const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
 export const defaults={fastSeconds:60,volumeSeconds:300,smartSeconds:900,offlineSeconds:180,ramHigh:90,ramClear:85,tempHigh:85,tempClear:80,gpuHigh:85,gpuClear:80,volumeHigh:90,volumeClear:85,holdSeconds:120,historyDays:30,aggregateDays:365,autoUpdate:true,updateWindowStart:0,updateWindowEnd:24};
 export const capabilities={extendedSensors:true};
-export class ApiError extends Error{constructor(status,message){super(message);this.status=status;}}
-export const fail=(status,msg)=>{throw new ApiError(status,msg)};
-export function textField(x,n,max=200){if(typeof x!=='string'||!x.trim()||x.length>max||/[\x00-\x1f]/.test(x))fail(400,'Некорректное поле '+n);return x.trim();}
 export function validate(p,now=Date.now()){
  if(!p||typeof p!=='object'||Array.isArray(p))fail(400,'Ожидается объект');
  textField(p.batchId,'batchId',80); const t=Date.parse(p.measuredAt);
@@ -35,7 +35,7 @@ export function settingsPatch(p,current=defaults){
  if(s.updateWindowStart>=s.updateWindowEnd)fail(400,'Окно установки должно быть в пределах суток UTC');return s;
 }
 export class Store{
- constructor(file=':memory:'){this.db=new DatabaseSync(file);this.db.exec('PRAGMA busy_timeout=5000');this.db.exec(readFileSync(new URL('./001.sql',import.meta.url),'utf8'));if(!this.db.prepare('PRAGMA table_info(aggregates)').all().some(c=>c.name==='ram_count'))this.db.exec(readFileSync(new URL('./002.sql',import.meta.url),'utf8'));}
+ constructor(file=':memory:'){this.db=new DatabaseSync(file);this.db.exec('PRAGMA busy_timeout=5000');this.db.exec(readFileSync(new URL('./001.sql',import.meta.url),'utf8'));if(!this.db.prepare('PRAGMA table_info(aggregates)').all().some(c=>c.name==='ram_count'))this.db.exec(readFileSync(new URL('./002.sql',import.meta.url),'utf8'));this.transaction(()=>{this.db.exec(readFileSync(new URL('./003.sql',import.meta.url),'utf8'));if(!this.one("SELECT value FROM settings WHERE key='groupsMigrated'")){for(const d of this.all('SELECT id,grp FROM devices')){const g=this.ensureGroup(d.grp);this.run('INSERT OR IGNORE INTO device_groups VALUES(?,?)',d.id,g.id);}this.run("INSERT INTO settings VALUES('groupsMigrated','true')");}});}
  close(){this.db.close();} run(q,...v){return this.db.prepare(q).run(...v);} one(q,...v){return this.db.prepare(q).get(...v);} all(q,...v){return this.db.prepare(q).all(...v);}
  transaction(fn){this.db.exec('BEGIN IMMEDIATE');try{const v=fn();this.db.exec('COMMIT');return v;}catch(e){this.db.exec('ROLLBACK');throw e;}}
  settings(){const r=this.one("SELECT value FROM settings WHERE key='global'");return {...defaults,...(r?JSON.parse(r.value):{})};}
@@ -45,7 +45,7 @@ export class Store{
  let requestedId=null,requestedSecret=null;if(p.requestId!=null||p.deviceSecret!=null){if(typeof p.requestId!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(p.requestId)||typeof p.deviceSecret!=='string'||! /^[a-zA-Z0-9_-]{43,128}$/.test(p.deviceSecret))fail(400,'Некорректный идентификатор регистрации');requestedId=p.requestId;requestedSecret=p.deviceSecret;}
  return this.transaction(()=>{if(requestedId){const old=this.one('SELECT * FROM devices WHERE id=?',requestedId);if(old){if(old.revoked||!equal(old.secret,hash(requestedSecret)))fail(403,'Регистрация отклонена');return {id:requestedId,secret:requestedSecret,settings:this.settings()};}}
  const t=this.one('SELECT * FROM tokens WHERE hash=?',hash(p.token));if(!t||t.expires<=now||t.remaining<1)fail(403,'Токен истёк или использован');
- const id=requestedId||randomUUID(),secret=requestedSecret||randomBytes(32).toString('base64url');this.run('INSERT INTO devices(id,secret,name,grp,os,version,created) VALUES(?,?,?,?,?,?,?)',id,hash(secret),name,group,os,version,now);this.run('UPDATE tokens SET remaining=remaining-1 WHERE hash=?',hash(p.token));return {id,secret,settings:this.settings()};});}
+ const id=requestedId||randomUUID(),secret=requestedSecret||randomBytes(32).toString('base64url');this.run('INSERT INTO devices(id,secret,name,grp,os,version,created) VALUES(?,?,?,?,?,?,?)',id,hash(secret),name,group,os,version,now);this.run('INSERT INTO device_groups VALUES(?,?)',id,this.ensureGroup(group).id);this.run('UPDATE tokens SET remaining=remaining-1 WHERE hash=?',hash(p.token));return {id,secret,settings:this.settings()};});}
  auth(id,secret){const d=this.one('SELECT * FROM devices WHERE id=?',id||'');if(!d||d.revoked||!equal(d.secret,hash(secret||'')))fail(401,'Учётные данные отозваны или неверны');return d;}
  ingest(id,p,now=Date.now()){const t=validate(p,now);return this.transaction(()=>{
  const d=this.one('SELECT * FROM devices WHERE id=?',id);if(!d||d.revoked)fail(401,'Устройство недоступно');
@@ -70,7 +70,7 @@ export class Store{
  else continue;this.event(id,rule,bad,title,now,hold);}
  }
  tick(now=Date.now()){const s=this.settings();for(const d of this.all('SELECT id,last_seen,created,maintenance FROM devices WHERE revoked=0')){if(d.maintenance)continue;this.event(d.id,'offline',now-(d.last_seen||d.created)>s.offlineSeconds*1000,'Нет связи с устройством',now,0);}}
- devices(now=Date.now()){this.tick(now);return this.all('SELECT id,name,grp,os,version,last_seen,measured,latest,maintenance,revoked FROM devices ORDER BY name').map(d=>({...d,latest:d.latest?JSON.parse(d.latest):null,status:d.revoked?'revoked':d.maintenance?'maintenance':!d.last_seen||now-d.last_seen>this.settings().offlineSeconds*1000?'offline':'online',problems:this.one('SELECT count(*) n FROM events WHERE device=? AND opened IS NOT NULL AND resolved IS NULL',d.id).n}));}
+ devices(now=Date.now()){this.tick(now);return this.all('SELECT id,name,grp,os,version,last_seen,measured,latest,maintenance,revoked FROM devices ORDER BY name').map(d=>{const groups=this.all('SELECT g.* FROM groups g JOIN device_groups dg ON dg.grp=g.id WHERE dg.device=? ORDER BY g.name',d.id);return {...d,groups,grp:groups.map(g=>g.name).join(', ')||'Без группы',latest:d.latest?JSON.parse(d.latest):null,status:d.revoked?'revoked':d.maintenance?'maintenance':!d.last_seen||now-d.last_seen>this.settings().offlineSeconds*1000?'offline':'online',problems:this.one('SELECT count(*) n FROM events WHERE device=? AND opened IS NOT NULL AND resolved IS NULL',d.id).n};});}
  history(id,limit=360){return this.all('SELECT measured,payload FROM samples WHERE device=? ORDER BY measured DESC LIMIT ?',id,limit).reverse().map(r=>JSON.parse(r.payload));}
  events(id){return this.all('SELECT * FROM events WHERE opened IS NOT NULL'+(id?' AND device=?':'')+' ORDER BY started DESC LIMIT 1000',...(id?[id]:[]));}
  maintain(id,on){if(typeof on!=='boolean')fail(400,'Нужно логическое значение');if(!this.run('UPDATE devices SET maintenance=? WHERE id=?',on?1:0,id).changes)fail(404,'Устройство не найдено');}
@@ -80,3 +80,4 @@ export class Store{
  this.run('DELETE FROM samples WHERE measured<?',now-s.historyDays*86400000);this.run('DELETE FROM aggregates WHERE hour<?',now-s.aggregateDays*86400000);this.run('DELETE FROM tokens WHERE expires<? OR remaining=0',now);this.run('DELETE FROM events WHERE resolved IS NOT NULL AND resolved<?',now-s.aggregateDays*86400000);
  });}
 }
+Object.assign(Store.prototype,management);

@@ -2,16 +2,23 @@ name: contourwatch
 
 services:
   server:
-    image: contourwatch:0.1.2
+    image: contourwatch:0.2.0
     build:
       context: ..
       dockerfile: deploy/Dockerfile
     init: true
     restart: unless-stopped
-    stop_grace_period: 15s
+    stop_grace_period: 45s
     environment:
       PUBLIC_URL: ${PUBLIC_URL:?Set the external HTTPS URL in deploy/.env}
       TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_MODE: ${SMTP_MODE:-starttls}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_PASSWORD_FILE: ${SMTP_PASSWORD_FILE:-}
     ports:
       - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-8080}:8080"
     volumes:
