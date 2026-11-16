@@ -76,6 +76,10 @@ def check(config, policy, root, current, post):
             return
         updates = Path(root)/'updates'
         updates.mkdir(exist_ok=True, mode=0o700)
+        blocked = updates/'blocked-release.txt'
+        if blocked.exists() and blocked.read_text().strip() == artifact['tag']:
+            STATUS = 'Неудачный выпуск заблокирован: '+artifact['tag']
+            return
         if sum(p.stat().st_size for p in updates.rglob('*') if p.is_file()) > 100*1024*1024:
             STATUS = 'Нужно очистить архивы предыдущих обновлений'
             return
@@ -179,6 +183,7 @@ def apply(stage):
                     healthy = 0
             raise RuntimeError('health check')
         except Exception:
+            (root/'updates'/'blocked-release.txt').write_text(artifact['tag'])
             service('stop')
             replace(backup)
             service('start')

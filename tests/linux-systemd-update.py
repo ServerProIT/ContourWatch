@@ -84,6 +84,7 @@ try:
         assert 'завершено: 0.2.1' in release('0.2.1')
         assert status('0.2.1')
         assert 'Возвращена предыдущая версия' in release('0.2.2',broken=True)
+        assert (ROOT/'updates/blocked-release.txt').read_text() == 'agent-0.2.2'
         wait(lambda: status('0.2.1'))
         run('systemctl','is-active','--quiet','contourwatch.service')
         assert (ROOT/'config.json').read_text()=='CI-IDENTITY-MUST-SURVIVE'

@@ -1,3 +1,5 @@
+> Исторический установщик 0.1.2. Новые функции панели, SMART/износ, пауза и подписанные обновления требуют агента 0.2.0: см. [актуальную MSI-инструкцию](../../docs/RELEASE-0.3.0.md).
+
 # Windows-агент 0.1.2
 
 [Скачать ContourSetup.exe](https://github.com/ServerProIT/ContourWatch/raw/refs/heads/main/downloads/windows-x64/ContourSetup.exe) · [SHA256SUMS.txt](SHA256SUMS.txt)

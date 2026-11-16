@@ -45,6 +45,7 @@ try{
   $process=Start-Process -FilePath "$stage\CIUpdater.exe" -ArgumentList "`"$stage`"" -WindowStyle Hidden -PassThru -Wait
   if($process.ExitCode -ne 1){throw 'Deliberately unhealthy update did not report rollback'}
   if((Get-Content -LiteralPath "$root\updates\updater.log" -Raw -Encoding UTF8) -notmatch ': (0|3010)\s*$'){throw 'Previous MSI could not be restored'}
+  if((Get-Content -LiteralPath "$root\updates\blocked-release.txt" -Raw).Trim() -ne 'agent-0.2.1'){throw 'Failed release was not blocked'}
   Healthy
   if($before -and [IO.File]::ReadAllText($config) -ne $before){throw 'Rollback changed identity'}
   Write-Output 'PASS pinned-signature updater actual MSI install and failed-health rollback with identity preserved'
