@@ -71,7 +71,8 @@ export function createApp(store,{secureCookies=true,publicUrl=null,trustedProxie
  if(path==='/api/notifications/test'&&req.method==='POST'){const c=store.channels().find(c=>c.id===body.id);if(!c?.enabled)fail(400,'Выберите включённый канал');if(!smtpConfigured)fail(400,'SMTP ещё не настроен на сервере');const count=store.one("SELECT count(*) n FROM notification_queue WHERE phase='test' AND created>?",now-60000).n;if(count>=5)fail(429,'Не более пяти тестовых писем в минуту');store.run('INSERT INTO notification_queue(id,channel,phase,next_try,created) VALUES(?,?,?,?,?)',randomUUID(),c.id,'test',now,now);store.audit(session,'notification.test',c.id);return send(202,{ok:true});}
  if(path==='/api/tokens'&&req.method==='POST')return send(201,store.token(body.uses??1,body.minutes??60));
  if(path==='/api/settings'&&req.method==='POST')return send(200,store.saveSettings(body));
- const action=path.match(/^\/api\/devices\/([a-f0-9-]{36})\/(maintenance|revoke|edit|pause)$/);if(action&&req.method==='POST'){
+ const action=path.match(/^\/api\/devices\/([a-f0-9-]{36})\/(maintenance|revoke|edit|pause|delete)$/);if(action&&req.method==='POST'){
+ if(action[2]==='delete'){store.deleteRevokedDevice(action[1],session);return send(200,{ok:true});}
  if(action[2]==='pause')store.pauseDevice(action[1],body.enabled);
  else if(action[2]==='maintenance')store.maintain(action[1],body.enabled);
  else if(action[2]==='revoke'){if(!store.run('UPDATE devices SET revoked=1 WHERE id=?',action[1]).changes)fail(404,'Не найдено');}
@@ -80,7 +81,7 @@ export function createApp(store,{secureCookies=true,publicUrl=null,trustedProxie
  fail(404,'Метод API не найден');
  }
  if(req.method!=='GET')fail(405,'Метод не разрешён');
- const files={'/':'index.html','/app.js':'app.js','/panel.js':'panel.js','/workspace.js':'workspace.js','/layout-editor.js':'layout-editor.js','/layout-editor.css':'layout-editor.css','/workspace.css':'workspace.css','/styles.css':'styles.css','/panel.css':'panel.css','/icon.svg':'icon.svg','/agent.svg':'agent.svg'};const file=files[path];if(!file)fail(404,'Страница не найдена');
+ const files={'/':'index.html','/app.js':'app.js','/panel.js':'panel.js','/home.js':'home.js','/home.css':'home.css','/workspace.js':'workspace.js','/layout-editor.js':'layout-editor.js','/layout-editor.css':'layout-editor.css','/workspace.css':'workspace.css','/styles.css':'styles.css','/panel.css':'panel.css','/icon.svg':'icon.svg','/agent.svg':'agent.svg'};const file=files[path];if(!file)fail(404,'Страница не найдена');
  const content=await readFile(resolve(webRoot,file));res.writeHead(200,{'Content-Type':{'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'}[extname(file)]});res.end(content);
  }catch(e){if(!res.headersSent)send(e instanceof ApiError?e.status:500,{error:e instanceof ApiError?e.message:'Внутренняя ошибка сервера'});else res.end();if(!(e instanceof ApiError))console.error('Request failed:',e.name);}
  });server.requestTimeout=20000;server.headersTimeout=10000;server.keepAliveTimeout=5000;return server;

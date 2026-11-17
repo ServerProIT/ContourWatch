@@ -2,6 +2,7 @@ import {randomBytes,randomUUID,scrypt as scryptCallback,timingSafeEqual} from 'n
 import {promisify} from 'node:util';
 import {fail,textField} from './errors.mjs';
 import {validateLayout} from './layout.mjs';
+import {validateDashboard} from './dashboard.mjs';
 const scrypt=promisify(scryptCallback),roles=['admin','manager','viewer'];
 const publicUser=u=>({id:u.id,username:u.username,role:u.role,created:u.created,enabled:!!u.enabled});
 export const columnIds=['name','status','smart','cpu','gpu','fan','ram','volume','problems','seen'];
@@ -14,6 +15,25 @@ async function passwordHash(password){if(typeof password!=='string'||password.le
 // An unknown login still performs the same password derivation.
 const dummy='0'.repeat(32)+':'+ '0'.repeat(128);
 export const management={
+ deleteRevokedDevice(id,actor){
+  if(!['admin','manager'].includes(actor?.role))fail(403,'Нужна роль менеджера или администратора');
+  return this.transaction(()=>{
+   const d=this.one('SELECT revoked FROM devices WHERE id=?',id);if(!d)fail(404,'Устройство не найдено');if(!d.revoked)fail(409,'Сначала отзовите доступ устройства');
+   // Empty device lists mean "all": disable a rule when its last explicit PC is removed.
+   for(const table of ['problem_rules','notification_rules'])for(const row of this.all(`SELECT id,value FROM ${table}`)){
+    const rule=JSON.parse(row.value);if(!rule.devices?.includes(id))continue;rule.devices=rule.devices.filter(x=>x!==id);if(!rule.devices.length)rule.enabled=false;
+    this.run(`UPDATE ${table} SET value=? WHERE id=?`,JSON.stringify(rule),row.id);
+    if(!rule.enabled)this.run("UPDATE notification_queue SET status='cancelled',error='Устройство удалено' WHERE rule=? AND status='pending'",row.id);
+   }
+   for(const row of this.all('SELECT owner,value FROM preferences')){
+    const p=JSON.parse(row.value);if(!p.dashboard)continue;const old=JSON.stringify(p.dashboard);
+    p.dashboard.widgets=p.dashboard.widgets.map(w=>({...w,devices:w.devices.filter(x=>x!==id)})).filter(w=>w.devices.length);
+    if(JSON.stringify(p.dashboard)!==old)this.run('UPDATE preferences SET value=? WHERE owner=?',JSON.stringify(p),row.owner);
+   }
+   for(const table of ['samples','aggregates','device_groups','events'])this.run(`DELETE FROM ${table} WHERE device=?`,id);
+   this.run('DELETE FROM devices WHERE id=?',id);this.audit(actor,'device.delete',id);return {ok:true};
+  });
+ },
  users(){return this.all('SELECT id,username,role,created,enabled FROM users ORDER BY username');},
  async loginUser(username,password){const valid=typeof username==='string'&&username.length<=64&&typeof password==='string'&&password.length<=256;const u=valid?this.one('SELECT * FROM users WHERE username=?',fold(username)):null;const [salt,expected]=(u?.password||dummy).split(':');const actual=await scrypt(typeof password==='string'?password.slice(0,256):'',salt,64);return u&&u.enabled&&timingSafeEqual(actual,Buffer.from(expected,'hex'))?u:null;},
  async saveUser(p,actor){optionalId(p);const old=p.id?this.one('SELECT * FROM users WHERE id=?',p.id):null;if(p.id&&!old)fail(404,'Пользователь не найден');
@@ -29,7 +49,7 @@ export const management={
  deleteUser(id,actor){textField(id,'ID',64);const old=this.one('SELECT * FROM users WHERE id=?',id);if(!old)fail(404,'Пользователь не найден');if(old.role==='admin'||old.id===actor.id)fail(403,'Нельзя удалить этого пользователя');this.transaction(()=>{this.run('DELETE FROM users WHERE id=?',id);this.run('DELETE FROM preferences WHERE owner=?',id);this.audit(actor,'user.delete',id);});return {ok:true};},
  audit(actor,action,target){this.run('INSERT INTO audit(at,actor,action,target) VALUES(?,?,?,?)',Date.now(),actor.id,action,target);},
  preferences(owner){return JSON.parse(this.one('SELECT value FROM preferences WHERE owner=?',owner)?.value||'{}');},
- savePreferences(owner,p){if(!p||typeof p!=='object'||Array.isArray(p)||!Object.keys(p).length||Object.keys(p).some(k=>!['columns','layout'].includes(k)))fail(400,'Некорректные настройки вида');const value={...this.preferences(owner)};if(p.columns!==undefined){const columns=list(p.columns,'колонки',columnIds.length);if(!columns.length||columns.some(c=>!columnIds.includes(c)))fail(400,'Выберите хотя бы одну известную колонку');value.columns=columns;}if(p.layout!==undefined)value.layout=validateLayout(p.layout);this.run('INSERT INTO preferences VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET value=excluded.value',owner,JSON.stringify(value));return value;},
+ savePreferences(owner,p){if(!p||typeof p!=='object'||Array.isArray(p)||!Object.keys(p).length||Object.keys(p).some(k=>!['columns','layout','dashboard'].includes(k)))fail(400,'Некорректные настройки вида');const value={...this.preferences(owner)};if(p.columns!==undefined){const columns=list(p.columns,'колонки',columnIds.length);if(!columns.length||columns.some(c=>!columnIds.includes(c)))fail(400,'Выберите хотя бы одну известную колонку');value.columns=columns;}if(p.layout!==undefined)value.layout=validateLayout(p.layout);if(p.dashboard!==undefined){value.dashboard=validateDashboard(p.dashboard);for(const w of value.dashboard.widgets)for(const id of w.devices)if(!this.one('SELECT id FROM devices WHERE id=?',id))fail(400,'Устройство блока не найдено');}this.run('INSERT INTO preferences VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET value=excluded.value',owner,JSON.stringify(value));return value;},
  groups(){return this.all('SELECT * FROM groups ORDER BY name');},
  ensureGroup(name){name=textField(name,'группа');let g=this.groups().find(g=>fold(g.name)===fold(name));if(!g){g={id:randomUUID(),name};this.run('INSERT INTO groups VALUES(?,?)',g.id,g.name);}return g;},
  saveGroup(p){optionalId(p);const name=textField(p.name,'группа');if(this.groups().some(g=>g.id!==p.id&&fold(g.name)===fold(name)))fail(409,'Группа уже существует');const id=p.id||randomUUID();if(p.id){if(!this.run('UPDATE groups SET name=? WHERE id=?',name,id).changes)fail(404,'Группа не найдена');}else this.run('INSERT INTO groups VALUES(?,?)',id,name);return {id,name};},
