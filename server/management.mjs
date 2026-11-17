@@ -1,6 +1,7 @@
 import {randomBytes,randomUUID,scrypt as scryptCallback,timingSafeEqual} from 'node:crypto';
 import {promisify} from 'node:util';
 import {fail,textField} from './errors.mjs';
+import {validateLayout} from './layout.mjs';
 const scrypt=promisify(scryptCallback),roles=['admin','manager','viewer'];
 const publicUser=u=>({id:u.id,username:u.username,role:u.role,created:u.created,enabled:!!u.enabled});
 export const columnIds=['name','status','smart','cpu','gpu','fan','ram','volume','problems','seen'];
@@ -28,7 +29,7 @@ export const management={
  deleteUser(id,actor){textField(id,'ID',64);const old=this.one('SELECT * FROM users WHERE id=?',id);if(!old)fail(404,'Пользователь не найден');if(old.role==='admin'||old.id===actor.id)fail(403,'Нельзя удалить этого пользователя');this.transaction(()=>{this.run('DELETE FROM users WHERE id=?',id);this.run('DELETE FROM preferences WHERE owner=?',id);this.audit(actor,'user.delete',id);});return {ok:true};},
  audit(actor,action,target){this.run('INSERT INTO audit(at,actor,action,target) VALUES(?,?,?,?)',Date.now(),actor.id,action,target);},
  preferences(owner){return JSON.parse(this.one('SELECT value FROM preferences WHERE owner=?',owner)?.value||'{}');},
- savePreferences(owner,p){const columns=list(p.columns,'колонки',columnIds.length);if(!columns.length||columns.some(c=>!columnIds.includes(c)))fail(400,'Выберите хотя бы одну известную колонку');const value={columns};this.run('INSERT INTO preferences VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET value=excluded.value',owner,JSON.stringify(value));return value;},
+ savePreferences(owner,p){if(!p||typeof p!=='object'||Array.isArray(p)||!Object.keys(p).length||Object.keys(p).some(k=>!['columns','layout'].includes(k)))fail(400,'Некорректные настройки вида');const value={...this.preferences(owner)};if(p.columns!==undefined){const columns=list(p.columns,'колонки',columnIds.length);if(!columns.length||columns.some(c=>!columnIds.includes(c)))fail(400,'Выберите хотя бы одну известную колонку');value.columns=columns;}if(p.layout!==undefined)value.layout=validateLayout(p.layout);this.run('INSERT INTO preferences VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET value=excluded.value',owner,JSON.stringify(value));return value;},
  groups(){return this.all('SELECT * FROM groups ORDER BY name');},
  ensureGroup(name){name=textField(name,'группа');let g=this.groups().find(g=>fold(g.name)===fold(name));if(!g){g={id:randomUUID(),name};this.run('INSERT INTO groups VALUES(?,?)',g.id,g.name);}return g;},
  saveGroup(p){optionalId(p);const name=textField(p.name,'группа');if(this.groups().some(g=>g.id!==p.id&&fold(g.name)===fold(name)))fail(409,'Группа уже существует');const id=p.id||randomUUID();if(p.id){if(!this.run('UPDATE groups SET name=? WHERE id=?',name,id).changes)fail(404,'Группа не найдена');}else this.run('INSERT INTO groups VALUES(?,?)',id,name);return {id,name};},

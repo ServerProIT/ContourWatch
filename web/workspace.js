@@ -1,0 +1,21 @@
+'use strict';
+const deviceModal=document.createElement('dialog');deviceModal.id='device-fullscreen';deviceModal.className='device-modal';deviceModal.setAttribute('aria-label','Устройство на весь экран');document.body.append(deviceModal);deviceModal.append($('device-pane'),$('chart-tooltip'));
+let deviceTab='pane-latest',workspaceOwner=null;
+const reducedMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+const animateIn=(el)=>{if(!reducedMotion())el?.animate([{opacity:.3,transform:'translateY(7px)'},{opacity:1,transform:'translateY(0)'}],{duration:180,easing:'cubic-bezier(.2,.7,.2,1)'});};
+const mainAside=document.querySelector('#shell>aside'),oldHeader=document.querySelector('#shell main>header');mainAside.append(oldHeader.querySelector('.header-actions'));oldHeader.hidden=true;
+const overview=document.createElement('div');overview.className='overview-bar';const devicePage=$('devices-page');devicePage.prepend(overview);overview.append(devicePage.querySelector('.page-title'),devicePage.querySelector('.stats'));
+const fleetHeading=devicePage.querySelector('.fleet-heading');fleetHeading.hidden=true;devicePage.querySelector('footer').append($('updated'));
+$('add-device').textContent='＋ Устройство';$('add-device').title='Подключить устройство';
+const layoutEditor=new ContourLayoutEditor({styles:false,roots:[$('shell'),...document.querySelectorAll('dialog')],available:()=>!!currentUser&&!$('shell').hidden,owner:()=>currentUser?.id,mount:()=>[...document.querySelectorAll('dialog[open]')].at(-1)||document.body,save:async(layout,owner)=>{if(currentUser?.id!==owner||workspaceOwner!==owner)return;await api('preferences',{layout});}});
+const workspaceApi=api;api=async function(path,body,options){const response=await workspaceApi(path,body,options);if(path==='preferences'&&body===undefined){workspaceOwner=currentUser?.id;layoutEditor.setLayout(response.layout||{});}return response;};
+const workspaceLogin=showLogin;showLogin=function(){layoutEditor.setActive(false);layoutEditor.setLayout({});workspaceOwner=null;workspaceLogin();};
+function selectDeviceTab(id,animate=true){deviceTab=id;for(const target of ['pane-latest','pane-history','pane-events']){const section=$(target);if(section){section.hidden=target!==id;section.setAttribute('role','tabpanel');}}for(const button of deviceModal.querySelectorAll('[data-pane-jump]')){const active=button.dataset.paneJump===id;button.setAttribute('role','tab');button.setAttribute('aria-selected',String(active));button.setAttribute('aria-controls',button.dataset.paneJump);}deviceModal.querySelector('.pane-jumps')?.setAttribute('role','tablist');if(animate)animateIn($(id));}
+deviceModal.addEventListener('click',e=>{const tab=e.target.closest('[data-pane-jump]');if(tab){e.preventDefault();e.stopImmediatePropagation();selectDeviceTab(tab.dataset.paneJump);}});
+const workspaceShowDevice=showDevice;showDevice=function(id){if(detailId!==id)deviceTab='pane-latest';const wasOpen=deviceModal.open;const work=workspaceShowDevice(id);selectDeviceTab(deviceTab,false);if(!wasOpen){deviceModal.showModal();deviceModal.scrollTop=0;animateIn($('device-pane'));deviceModal.querySelector('[data-pane-action="close"]')?.focus({preventScroll:true});}layoutEditor.refresh();return work;};
+const workspaceClose=closeDevicePane;closeDevicePane=function(){layoutEditor.setActive(false);if(deviceModal.open)deviceModal.close();workspaceClose();layoutEditor.refresh();};
+deviceModal.addEventListener('cancel',e=>{e.preventDefault();closeDevicePane();renderDevices();});
+const workspaceNavigate=navigate;navigate=function(next){const previous=page;workspaceNavigate(next);if(page!==previous)animateIn($(page+'-page'));};
+document.addEventListener('toggle',e=>{if(e.target.matches('.filter-menu[open]'))animateIn(e.target.querySelector('.filter-content'));if(e.target.matches('.graph-section[open],.diagnostics[open]'))animateIn(e.target.lastElementChild);if(e.target.matches('dialog'))layoutEditor.refresh();},true);
+const workspaceObserver=new MutationObserver(()=>{if(deviceModal.open)selectDeviceTab(deviceTab,false);});workspaceObserver.observe($('device-pane'),{childList:true,subtree:true});
+document.addEventListener('click',e=>{if(e.target.closest('#theme'))requestAnimationFrame(()=>layoutEditor.refresh());});
