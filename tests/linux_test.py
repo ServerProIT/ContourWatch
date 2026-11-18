@@ -137,5 +137,40 @@ class LinuxLogic(unittest.TestCase):
             self.assertEqual(m['state'], 'error')
             self.assertIsNone(m['value'])
 
+    def test_diagnostic_projection_excludes_private_raw_data_and_redacts_credentials(self):
+        m = a.metric('cpu', 'temperature', 'CPU', 'unsupported', details={
+            'reason': 'PawnIO token=HIDDEN_TOKEN', 'serial': 'PRIVATE_SERIAL',
+            'raw': {'password': 'PRIVATE_RAW'}, 'errorType': 'TimeoutError'})
+        safe = a.diagnostic_projection(m)
+        content = json.dumps(safe)
+        self.assertIn('PawnIO', content)
+        self.assertIn('TimeoutError', content)
+        for value in ('HIDDEN_TOKEN', 'PRIVATE_SERIAL', 'PRIVATE_RAW'):
+            self.assertNotIn(value, content)
+
+    def test_diagnostic_export_reads_public_files_without_config_or_service_lock(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            agent = a.Agent(root)
+            agent.cache['sensors'] = [a.metric('cpu', 'temperature', 'CPU', 'error', details='TimeoutError')]
+            agent.record_diagnostics('sensors')
+            (root/'config.json').write_text('PRIVATE_CONFIG_TOKEN')
+            (root/'queue'/'sample.json').write_text('PRIVATE_QUEUE')
+            target = root/'export.zip'
+            a.export_diagnostics(root, target)
+            with zipfile.ZipFile(target) as archive:
+                self.assertIn('diagnostics.txt', archive.namelist())
+                self.assertIn('diagnostics.json', archive.namelist())
+                text = archive.read('diagnostics.txt').decode()
+                self.assertIn('TimeoutError', text)
+                self.assertNotIn('PRIVATE_', text)
+                self.assertFalse(any('config' in n or 'queue' in n for n in archive.namelist()))
+            with self.assertRaises(FileExistsError):
+                a.export_diagnostics(root, target)
+            a.export_diagnostics(root, root/'export.txt', False)
+            self.assertIn('TimeoutError', (root/'export.txt').read_text(encoding='utf-8'))
+            agent.pool.shutdown()
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

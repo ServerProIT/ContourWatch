@@ -1,11 +1,11 @@
 #requires -Version 7.4
-param([string]$Version='0.2.0',[string]$KeyFile,[ValidateSet('stable','pilot')][string]$Channel='stable',[int]$Pilot=1)
+param([string]$Version='0.2.1',[string]$KeyFile,[ValidateSet('stable','pilot')][string]$Channel='stable',[int]$Pilot=1)
 $ErrorActionPreference='Stop'
 $project=Split-Path $PSScriptRoot -Parent
 if(!$KeyFile){$KeyFile=Join-Path $project 'work\release-signing\release-key.dpapi'}
 if($Version -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,5}$'){throw 'Invalid version'}
 $tag="agent-$Version";if($Channel -eq 'pilot'){$tag+="-pilot.$Pilot"}
-$output=Join-Path $project 'dist\release';New-Item -ItemType Directory -Force $output | Out-Null
+$output=Join-Path $project ("dist\release\"+$tag);New-Item -ItemType Directory -Force $output | Out-Null
 $msi=Join-Path $project "dist\windows-x64\ContourWatch-$Version-windows-x64.msi"
 if(!(Test-Path -LiteralPath $msi)){throw 'Build the matching MSI first'}
 Copy-Item -LiteralPath $msi -Destination $output -Force

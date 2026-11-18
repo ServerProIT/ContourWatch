@@ -39,6 +39,10 @@ jobs:
           if ($LASTEXITCODE) { throw 'SMART/update tests compilation failed' }
           & .\dist\windows-x64\SmartUpdateTests.exe
           if ($LASTEXITCODE) { throw 'SMART/update tests failed' }
+          & $csc /nologo /r:dist\windows-x64\ContourAgent.exe /r:dist\windows-x64\ContourTray.exe /r:System.ServiceProcess.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /out:dist\windows-x64\DiagnosticsTests.exe tests\windows-diagnostics.cs
+          if ($LASTEXITCODE) { throw 'Diagnostics tests compilation failed' }
+          & .\dist\windows-x64\DiagnosticsTests.exe "$env:RUNNER_TEMP\contour-diagnostic-tests"
+          if ($LASTEXITCODE) { throw 'Diagnostics viewer/export tests failed' }
       - name: Actual Windows service install and restart
         shell: powershell
         run: .\tests\windows-service.ps1

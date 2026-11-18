@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 DEFAULTS = dict(fastSeconds=60, volumeSeconds=300, smartSeconds=900)
 STOP = threading.Event()
 
@@ -199,6 +199,71 @@ def post(config, path, body):
             raise ValueError('response limit')
         return json.loads(data)
 
+def diagnostic_clean(value):
+    text = str(value or '')
+    text = re.sub(r'''(?i)["']?(token|secret|authorization|password)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|(?:Bearer\s+)?[^\s,;]+)''', r'\1=[REDACTED]', text)
+    return text.replace('\r', ' ').replace('\n', ' ')[:400]
+
+def diagnostic_projection(m):
+    details = m.get('details')
+    allowed = ('reason', 'message', 'errorType', 'wearSource', 'smartctlExit', 'pawnIoInstalled')
+    safe = {k: diagnostic_clean(details[k]) for k in allowed if k in details} if isinstance(details, dict) else {'reason': diagnostic_clean(details)} if details else {}
+    result = {k: diagnostic_clean(m.get(k)) for k in ('id', 'kind', 'name', 'state', 'source', 'measuredAt')}
+    result['reason'] = safe.get('reason') or safe.get('message') or safe.get('errorType') or ('Показатель получен' if m.get('state') == 'ok' else 'Значение не предоставлено: проверьте поддержку оборудования, драйвер и права службы')
+    result['details'] = safe
+    return result
+
+def diagnostic_text(root):
+    directory = Path(root)/'public'
+    lines = ['Контур · логи и диагностика', 'Экспорт: '+iso(), 'Время записей UTC. При паузе или остановленной службе данные могут быть устаревшими.']
+    try:
+        snapshot = directory/'diagnostics.json'
+        if snapshot.stat().st_size > 900000:
+            raise ValueError('snapshot size')
+        report = json.loads(snapshot.read_text(encoding='utf-8'))
+        lines.append('Версия: '+report['version']+' · Обновлено: '+report['updatedAt'])
+        for name, collector in report['collectors'].items():
+            lines.append('\n['+name+'] '+collector['completedAt'])
+            for m in collector['metrics']:
+                lines.extend([' · '.join(str(m.get(k, '')) for k in ('state', 'kind', 'name', 'source')), '  '+m.get('measuredAt', '')+' · '+m.get('reason', ''), '  '+json.dumps(m.get('details', {}), ensure_ascii=False)])
+    except FileNotFoundError:
+        lines.append('Служба ещё не записала диагностику. Дождитесь первого опроса датчиков (SMART — до 15 минут).')
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        lines.append('Снимок диагностики недоступен: '+type(exc).__name__)
+    for name in ('diagnostics.log.2', 'diagnostics.log.1', 'diagnostics.log'):
+        try:
+            with (directory/name).open('rb') as source:
+                size = source.seek(0, 2)
+                source.seek(max(0, size-262144))
+                if size > 262144:
+                    source.readline()
+                lines.extend(['\n--- '+name+' ---', source.read(262144).decode('utf-8', errors='replace')])
+        except OSError:
+            pass
+    return '\n'.join(lines)
+
+def export_diagnostics(root, destination, as_zip=True):
+    import zipfile
+    with Path(destination).open('xb') as output:
+        if not as_zip:
+            output.write(diagnostic_text(root).encode('utf-8'))
+            return
+        with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('diagnostics.txt', diagnostic_text(root))
+            directory = Path(root)/'public'
+            for name in ('diagnostics.json', 'diagnostics.log', 'diagnostics.log.1', 'diagnostics.log.2'):
+                source = directory/name
+                if source.is_file() and source.stat().st_size <= 900000:
+                    archive.writestr(name, source.read_bytes())
+            archive.writestr('README.txt', 'Локальная диагностика. Конфигурация, секреты, очередь метрик и исходные SMART-данные не включены. Проверьте содержимое перед передачей.')
+
+class DiagnosticFilter(logging.Filter):
+    def filter(self, record):
+        record.msg = diagnostic_clean(record.getMessage())
+        record.args = ()
+        return True
+
+
 class Agent:
     def __init__(self, root):
         self.root = Path(root)
@@ -309,6 +374,23 @@ class Agent:
         atomic(public/'status.json', dict(state=state, version=VERSION, updated=iso(),
                queue=len(list(self.queue.glob('*.json'))), server=server), 0o644)
 
+    def record_diagnostics(self, kind):
+        if not hasattr(self, 'diagnostic_collectors'):
+            self.diagnostic_collectors, self.diagnostic_states = {}, {}
+        projected = [diagnostic_projection(m) for m in self.cache[kind][:128]]
+        for m in projected:
+            key, signature = (kind, m['id']), (m['state'], m['reason'])
+            if self.diagnostic_states.get(key) != signature:
+                self.diagnostic_states[key] = signature
+                logging.log(logging.INFO if m['state'] == 'ok' else logging.WARNING, '%s', json.dumps(dict(collector=kind, **m), ensure_ascii=False))
+        self.diagnostic_collectors[kind] = dict(completedAt=iso(), metricCount=len(self.cache[kind]), metrics=projected)
+        public = self.root/'public'
+        public.mkdir(exist_ok=True, mode=0o755)
+        try:
+            atomic(public/'diagnostics.json', dict(version=VERSION, updatedAt=iso(), collectors=self.diagnostic_collectors), 0o644)
+        except OSError as exc:
+            logging.warning('diagnostic snapshot unavailable: %s', type(exc).__name__)
+
     def sample(self):
         return dict(batchId=str(uuid.uuid4()), measuredAt=iso(), version=VERSION,
                     metrics=[m for ms in self.cache.values() for m in ms if m['kind'] != 'disk_wear' or self.disk_wear],
@@ -331,6 +413,7 @@ class Agent:
             for kind in DEFAULT_KINDS:
                 if once:
                     self.cache[kind] = child_collect(kind)
+                    self.record_diagnostics(kind)
                     continue
                 job = self.jobs.get(kind)
                 if job and job.done():
@@ -338,6 +421,7 @@ class Agent:
                         self.cache[kind] = job.result()
                     except Exception as e:
                         self.cache[kind] = [metric(kind+':collector', 'temperature' if kind == 'sensors' else kind, kind, 'error', details=type(e).__name__)]
+                    self.record_diagnostics(kind)
                     del self.jobs[kind]
                     self.due[kind] = now + self.interval(kind)
                 if kind not in self.jobs and self.due.get(kind, 0) <= now:
@@ -402,6 +486,8 @@ def main():
     parser.add_argument('--root', default='/var/lib/contourwatch')
     parser.add_argument('--collect', choices=DEFAULT_KINDS)
     parser.add_argument('--once', action='store_true')
+    parser.add_argument('--logs', action='store_true')
+    parser.add_argument('--diagnostics', metavar='FILE')
     parser.add_argument('--configure', action='store_true')
     parser.add_argument('--reregister', action='store_true')
     parser.add_argument('--server')
@@ -411,6 +497,13 @@ def main():
     args = parser.parse_args()
     if args.collect:
         print(json.dumps(collect(args.collect), ensure_ascii=False, allow_nan=False))
+        return
+    if args.logs:
+        print(diagnostic_text(args.root))
+        return
+    if args.diagnostics:
+        export_diagnostics(args.root, args.diagnostics, not args.diagnostics.lower().endswith('.txt'))
+        print('Диагностика сохранена: '+args.diagnostics)
         return
     agent = Agent(args.root)
     # One lock guards both configuration changes and delivery, preventing lost updates.
@@ -435,7 +528,16 @@ def main():
             atomic(path, config)
             return
         handler = RotatingFileHandler(agent.root/'agent.log', maxBytes=1048576, backupCount=2)
-        logging.basicConfig(level=logging.INFO, handlers=[handler], format='%(asctime)s %(levelname)s %(message)s')
+        public = agent.root/'public'
+        public.mkdir(exist_ok=True, mode=0o755)
+        public_handler = RotatingFileHandler(public/'diagnostics.log', maxBytes=262144, backupCount=2, encoding='utf-8')
+        os.chmod(public/'diagnostics.log', 0o644)
+        public_handler.addFilter(DiagnosticFilter())
+        formatter = logging.Formatter('%(asctime)sZ %(levelname)s %(message)s')
+        formatter.converter = time.gmtime
+        handler.setFormatter(formatter)
+        public_handler.setFormatter(formatter)
+        logging.basicConfig(level=logging.INFO, handlers=[handler, public_handler])
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: STOP.set())
         agent.run(args.once)

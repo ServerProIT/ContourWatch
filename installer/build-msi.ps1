@@ -1,4 +1,4 @@
-param([string]$Version='0.2.0',[string]$Output)
+param([string]$Version='0.2.1',[string]$Output)
 $ErrorActionPreference='Stop'
 $project=Split-Path $PSScriptRoot -Parent
 $bin=Join-Path $project 'dist\windows-x64'
@@ -56,6 +56,7 @@ Row 'ServiceControl' @('AgentControl','ContourWatch',163,$null,1,$agentComponent
 Row 'Registry' @('TrayRun',2,'Software\Microsoft\Windows\CurrentVersion\Run','ContourWatchTray','"[INSTALLDIR]ContourTray.exe"',$trayComponent)
 Row 'Shortcut' @('Configure','MENUDIR','Configure ContourWatch',$setupComponent,'[INSTALLDIR]ContourSetup.exe',$null,'Configure server and registration',$null,$null,$null,1,'INSTALLDIR')
 Row 'Shortcut' @('Tray','MENUDIR','ContourWatch status',$trayComponent,'[INSTALLDIR]ContourTray.exe',$null,'Agent status',$null,$null,$null,1,'INSTALLDIR')
+Row 'Shortcut' @('Logs','MENUDIR','ContourWatch logs and diagnostics',$trayComponent,'[INSTALLDIR]ContourTray.exe','--logs','View and export local diagnostics',$null,$null,$null,1,'INSTALLDIR')
 Row 'Upgrade' @($upgrade,$null,$Version,$null,512,$null,'OLDERPRODUCTS');Row 'Upgrade' @($upgrade,$Version,$null,$null,2,$null,'NEWERPRODUCTS')
 Row 'LaunchCondition' @('Installed OR VersionNT64','Requires 64-bit Windows.')
 Row 'LaunchCondition' @('Installed OR NOT NEWERPRODUCTS','A newer ContourWatch version is already installed.')
