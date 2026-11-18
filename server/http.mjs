@@ -81,7 +81,7 @@ export function createApp(store,{secureCookies=true,publicUrl=null,trustedProxie
  fail(404,'Метод API не найден');
  }
  if(req.method!=='GET')fail(405,'Метод не разрешён');
- const files={'/':'index.html','/app.js':'app.js','/panel.js':'panel.js','/home.js':'home.js','/home.css':'home.css','/workspace.js':'workspace.js','/layout-editor.js':'layout-editor.js','/layout-editor.css':'layout-editor.css','/workspace.css':'workspace.css','/styles.css':'styles.css','/panel.css':'panel.css','/icon.svg':'icon.svg','/agent.svg':'agent.svg'};const file=files[path];if(!file)fail(404,'Страница не найдена');
+ const files={'/':'index.html','/app.js':'app.js','/panel.js':'panel.js','/structure.js':'structure.js','/structure.css':'structure.css','/home.js':'home.js','/home.css':'home.css','/workspace.js':'workspace.js','/layout-editor.js':'layout-editor.js','/layout-editor.css':'layout-editor.css','/workspace.css':'workspace.css','/styles.css':'styles.css','/panel.css':'panel.css','/icon.svg':'icon.svg','/agent.svg':'agent.svg'};const file=files[path];if(!file)fail(404,'Страница не найдена');
  const content=await readFile(resolve(webRoot,file));res.writeHead(200,{'Content-Type':{'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'}[extname(file)]});res.end(content);
  }catch(e){if(!res.headersSent)send(e instanceof ApiError?e.status:500,{error:e instanceof ApiError?e.message:'Внутренняя ошибка сервера'});else res.end();if(!(e instanceof ApiError))console.error('Request failed:',e.name);}
  });server.requestTimeout=20000;server.headersTimeout=10000;server.keepAliveTimeout=5000;return server;

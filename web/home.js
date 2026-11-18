@@ -9,7 +9,7 @@
  const homeLogin=showLogin;showLogin=function(){revision++;dashboard={version:1,widgets:[]};editing=false;returnHome=false;fleetReady=false;histories.clear();historyQueue=[];homeLogin();$('home-widgets').replaceChildren();};
  function pump(){while(historyJobs<3&&historyQueue.length){const job=historyQueue.shift();historyJobs++;job().finally(()=>{historyJobs--;pump();});}}
  function historyFor(id){const old=histories.get(id);if(old&&Date.now()-old.at<60000)return old.promise;const owner=currentUser?.id;const promise=new Promise((resolve,reject)=>{historyQueue.push(async()=>{if(owner!==currentUser?.id){resolve([]);return;}try{resolve(await api('devices/'+id+'/history'));}catch(e){histories.delete(id);reject(e);}});pump();});histories.set(id,{at:Date.now(),promise});return promise;}
- async function saveDashboard(next){const owner=currentUser?.id;const result=await api('preferences',{dashboard:next});if(owner!==currentUser?.id)return;dashboard=result.dashboard;revision++;renderHome();}
+ async function saveDashboard(next){const owner=currentUser?.id;const result=await api('preferences',{dashboard:next});if(owner!==currentUser?.id)return;dashboard=result.dashboard;for(const [index,w]of dashboard.widgets.entries()){const card=$('home-widget-'+w.id);if(card){card.dataset.homeOrder=index;card.style.order=index;}}revision++;renderHome();layoutEditor.position();}
  function deviceList(w){return w.devices.map(id=>devices.find(d=>d.id===id)).filter(Boolean);}
  function bar(label,value,max,tone='accent',suffix=''){return `<div class="home-bar"><div><span>${esc(label)}</span><strong>${esc(value)}${esc(suffix)}</strong></div><progress class="home-track tone-${tone}" value="${Math.max(0,value)}" max="${Math.max(1,max)}" aria-label="${esc(label)}"></progress></div>`;}
  function widgetBody(w){
@@ -28,7 +28,7 @@
   const root=$('home-widgets');root.classList.toggle('home-editing',editing);
   for(const key of chartTraces.keys())if(String(key).startsWith('home-'))chartTraces.delete(key);
   const expected=dashboard.widgets.map(w=>w.id).join(',');if(root.dataset.order!==expected){root.dataset.order=expected;root.innerHTML=dashboard.widgets.map(w=>`<article class="home-widget" id="home-widget-${w.id}"><div class="home-widget-heading"><h2></h2><div class="home-widget-tools"><button data-home-action="up" data-widget="${w.id}" aria-label="Поднять блок">↑</button><button data-home-action="down" data-widget="${w.id}" aria-label="Опустить блок">↓</button><button data-home-action="edit" data-widget="${w.id}">Изменить</button><button data-home-action="remove" data-widget="${w.id}" aria-label="Убрать блок">✕</button></div></div><div class="home-widget-body"></div></article>`).join('');}
-  for(const w of dashboard.widgets){const card=$('home-widget-'+w.id);card.querySelector('h2').textContent=w.title||names[w.type];const body=card.querySelector('.home-widget-body');body.innerHTML=widgetBody(w);
+  for(const w of dashboard.widgets){const card=$('home-widget-'+w.id);card.dataset.homeOrder=dashboard.widgets.indexOf(w);card.style.order=card.dataset.homeOrder;card.querySelector('h2').textContent=w.title||names[w.type];const body=card.querySelector('.home-widget-body');body.innerHTML=widgetBody(w);
    if(w.type==='history'&&deviceList(w).length){const target=body.querySelector('.home-history');historyFor(w.devices[0]).then(history=>{if(seq!==revision||!target.isConnected||page!=='home')return;const from=Date.now()-w.period*3600000,filtered=history.filter(p=>Date.parse(p.measuredAt)>=from);target.innerHTML=drawSeries(filtered,w.metric,'home-'+w.id);layoutEditor.refresh();}).catch(e=>{if(seq===revision&&target.isConnected)target.innerHTML=`<p class="bad">${esc(e.message)}</p><button data-home-retry="${w.devices[0]}">Повторить</button>`;});}
   }
   layoutEditor.refresh();
@@ -46,6 +46,8 @@
   function sync(){const type=form.elements.type.value;for(const [selector,visible]of [['single',['device','metric','history'].includes(type)],['many',['comparison','status','problems'].includes(type)],['metric',['metric','history'].includes(type)],['kind',type==='comparison'],['period',type==='history']])form.querySelector('[data-home-'+selector+']').hidden=!visible;}
   form.elements.type.onchange=sync;form.elements.device.onchange=sensors;sensors();sync();
  }
+ layoutEditor.options.onReorder=peers=>{if(!peers[0]?.parentElement.matches('.home-widgets'))return false;const byId=new Map(dashboard.widgets.map(w=>['home-widget-'+w.id,w]));const next={...dashboard,widgets:peers.map(p=>byId.get(p.id)).filter(Boolean)};saveDashboard(next).then(()=>layoutEditor.status('Сохранён порядок целых блоков')).catch(e=>toast(e.message));return true;};
+ const oldActive=layoutEditor.options.onActive;layoutEditor.options.onActive=active=>{oldActive?.(active);if(!active)renderHome();};
  $('home-add').onclick=$('home-first').onclick=()=>editWidget();$('home-edit').onclick=()=>{editing=!editing;renderHome();};$('home-arrange').onclick=()=>layoutEditor.setActive(true);
  document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{
   if(b.dataset.homeOpen)showDevice(b.dataset.homeOpen);
