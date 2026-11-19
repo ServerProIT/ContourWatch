@@ -13,10 +13,10 @@ using System.Security.Cryptography;
 using System.ServiceProcess;
 using System.Web.Script.Serialization;
 using Microsoft.Win32;
-[assembly:System.Reflection.AssemblyVersion("0.2.2.0")]
+[assembly:System.Reflection.AssemblyVersion("0.2.3.0")]
 namespace ContourWatch {
 public class Agent : ServiceBase {
- public const string Version="0.2.2";
+ public const string Version="0.2.3";
  public static JavaScriptSerializer Json { get { return new JavaScriptSerializer { MaxJsonLength=1048576,RecursionLimit=100 }; } }
  public static string Root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ContourWatch");
  Thread worker; readonly ManualResetEvent stop=new ManualResetEvent(false);

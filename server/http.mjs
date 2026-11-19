@@ -6,7 +6,7 @@ import {requestLogger,safeRoute} from './diagnostics.mjs';
 import {ApiError,equal,hash,fail} from './core.mjs';
 import {releaseManifest} from './releases.mjs';
 import {publicOrigin,proxyIps,clientIp,version} from './config.mjs';
-function fleetSummary(d){if(!d.latest)return d;const p=d.latest;return {...d,latest:{measuredAt:p.measuredAt,version:p.version,metrics:p.metrics.map(({details,...m})=>({...m,...(details&&typeof details==='object'?{details:{model:details.model,percentageUsed:details.percentageUsed,diskId:details.diskId}}:{})}))}};}
+function fleetSummary(d){if(!d.latest)return d;const p=d.latest;return {...d,latest:{measuredAt:p.measuredAt,version:p.version,metrics:p.metrics.map(({details,...m})=>({...m,...(details&&typeof details==='object'?{details:{model:details.model,percentageUsed:details.percentageUsed,diskId:details.diskId,smartctlExit:details.smartctlExit,pawnIoInstalled:details.pawnIoInstalled}}:{})}))}};}
 export function createApp(store,{secureCookies=true,publicUrl=null,trustedProxies=new Set(),webRoot=resolve(import.meta.dirname,'../web'),demo=false,logger=requestLogger,smtpConfigured=false}={}){
  const origin=publicOrigin(publicUrl),trusted=trustedProxies instanceof Set?proxyIps([...trustedProxies].join(',')):proxyIps(trustedProxies);
  if(origin&&!secureCookies)throw Error('Для внешнего HTTPS-адреса нужны Secure cookies');
@@ -41,7 +41,7 @@ export function createApp(store,{secureCookies=true,publicUrl=null,trustedProxie
  if(!identity)fail(401,'Неверный логин или пароль');
  for(const [k,v]of sessions)if(v.expires<now)sessions.delete(k);if(sessions.size>1000)fail(503,'Слишком много сеансов');const sid=randomBytes(32).toString('hex');sessions.set(hash(sid),{...identity,expires:now+8*3600000});res.setHeader('Set-Cookie',`cw=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${secureCookies?'; Secure':''}`);return send(200,{role:identity.role});}
  if(path==='/api/register'&&req.method==='POST')return send(201,store.register(body));
- if(path==='/api/update/check'&&req.method==='POST'){store.auth(req.headers['x-device-id'],(req.headers.authorization||'').replace(/^Bearer /,''));const p=store.updatePolicy();if(!p.enabled)return send(200,{available:false});try{return send(200,await releaseManifest(p.channel));}catch{fail(503,'Источник обновлений временно недоступен');}}
+ if(path==='/api/update/check'&&req.method==='POST'){store.auth(req.headers['x-device-id'],(req.headers.authorization||'').replace(/^Bearer /,''));const p=store.updatePolicy();if(!p.enabled&&body.manual!==true)return send(200,{available:false});try{return send(200,await releaseManifest(p.channel));}catch{fail(503,'Источник обновлений временно недоступен');}}
  if(path==='/api/control'&&req.method==='POST'){store.auth(req.headers['x-device-id'],(req.headers.authorization||'').replace(/^Bearer /,''));return send(200,store.controlDevice(req.headers['x-device-id'],body));}
  if(path==='/api/ingest'&&req.method==='POST'){store.auth(req.headers['x-device-id'],(req.headers.authorization||'').replace(/^Bearer /,''));return send(200,store.ingest(req.headers['x-device-id'],body));}
  const cookie=(req.headers.cookie||'').split(';').map(s=>s.trim()).find(s=>s.startsWith('cw='))?.slice(3);const session=cookie&&sessions.get(hash(cookie));if(!session||session.expires<now)fail(401,'Требуется вход');

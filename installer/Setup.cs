@@ -5,6 +5,15 @@ class Setup {
   var p=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);foreach(string a in args){var v=a.Split(new[]{'='},2);p[v[0]]=v.Length>1?v[1]:"true";}
   if(!Environment.Is64BitOperatingSystem)throw new Exception("Эта сборка предназначена для x64. x86 не проверена.");
   using(var k=Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full")){if(k==null||Convert.ToInt32(k.GetValue("Release",0))<528040)throw new Exception("Требуется .NET Framework 4.8. Установите официальный автономный пакет Microsoft и повторите установку.");}
+  if(p.ContainsKey("--check-updates")){
+   if(Registry.GetValue(@"HKEY_LOCAL_MACHINE\Software\ContourWatch","MsiManaged",null)==null){
+    AgentTheme.ShowMessage("Для обновления с автоматическим откатом нужна установка агента из MSI.","Контур · обновления");
+    return 1;
+   }
+   string result=AgentUpdater.CheckManually(version=>AgentTheme.ShowMessage("Доступна версия "+version+". Установить сейчас?","Контур · обновления",MessageBoxButtons.OKCancel,MessageBoxIcon.Question)==DialogResult.OK);
+   if(result!=null)AgentTheme.ShowMessage(result,"Контур · обновления");
+   return 0;
+  }
   if(p.ContainsKey("--check-connection")){Agent.CheckConnection(p["--check-connection"]);return 0;}
   if(p.ContainsKey("--uninstall")){Uninstall(p.ContainsKey("--silent"));return 0;}
   if(p.ContainsKey("--silent")){if(!p.ContainsKey("--server"))throw new Exception("Нужен --server");string token=p.ContainsKey("--token-file")?File.ReadAllText(p["--token-file"]).Trim():"";Install(p["--server"],token,p.ContainsKey("--name")?p["--name"]:Agent.NewAlias(),p.ContainsKey("--group")?p["--group"]:"Без группы",p.ContainsKey("--reregister"));return 0;}
@@ -40,12 +49,16 @@ class Setup {
   foreach(string f in new[]{"ContourAgent.exe","ContourAgent.exe.config","ContourTray.exe","ContourTray.exe.config","agent.ico"}){string path=Path.Combine(Dest,f);try{File.Delete(path);}catch{}}if(!quiet)AgentTheme.ShowMessage("Служба удалена. Настройки, очередь и сам установщик сохранены для восстановления. Их можно удалить вручную после проверки.","Контур");}
  class Wizard:Form {
   TextBox server=new TextBox(),token=new TextBox(),name=new TextBox(),group=new TextBox();CheckBox re=new AgentTheme.AgentCheckBox{Text="Повторная регистрация (новый токен)",AutoSize=true};Button test=new Button{Text="Проверить соединение",Width=200},install=new Button{Text="Установить / сохранить",Width=200};Label result=new Label{AutoSize=true,MaximumSize=new Size(430,0)};
-  public Wizard(){Text="Контур · установка агента";Width=560;Height=760;FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;Font=new Font("Segoe UI",10);var flow=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,Padding=new Padding(28)};Controls.Add(flow);flow.Controls.Add(AgentTheme.Picker(this));Shown+=(s,e)=>AgentTheme.Apply(this);FormClosing+=(s,e)=>{if(!install.Enabled)e.Cancel=true;};
+  public Wizard(){if(Registry.GetValue(@"HKEY_LOCAL_MACHINE\Software\ContourWatch","MsiManaged",null)!=null)install.Text="Сохранить подключение";Text="Контур · настройка подключения";Width=560;Height=760;FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;Font=new Font("Segoe UI",10);var flow=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,Padding=new Padding(28)};Controls.Add(flow);flow.Controls.Add(AgentTheme.Picker(this));Shown+=(s,e)=>AgentTheme.Apply(this);FormClosing+=(s,e)=>{if(!install.Enabled)e.Cancel=true;};
    flow.Controls.Add(new Label{Text="Контур / Windows-агент",Font=new Font(Font,FontStyle.Bold),AutoSize=true});Add(flow,"HTTPS адрес сервера",server);Add(flow,"Токен подключения",token);token.UseSystemPasswordChar=true;Add(flow,"Псевдоним устройства",name);Add(flow,"Группа",group);name.Text=Agent.NewAlias();group.Text="Без группы";
    try{var c=Agent.Config();server.Text=Agent.Get(c,"server");name.Text=Agent.Get(c,"name",name.Text);group.Text=Agent.Get(c,"group",group.Text);}catch{}
    flow.Controls.Add(re);var pawn=new Button{Text="Открыть официальный сайт драйвера PawnIO",Width=435};pawn.Click+=(s,e)=>Process.Start(new ProcessStartInfo("https://pawnio.eu/"){UseShellExecute=true});flow.Controls.Add(pawn);flow.Controls.Add(new Label{Text="Температура CPU и вентиляторы платы требуют подписанный PawnIO. GPU NVIDIA использует nvidia-smi из драйвера. Защиту Windows отключать не нужно.",AutoSize=true,MaximumSize=new Size(435,0)});flow.Controls.Add(test);flow.Controls.Add(install);flow.Controls.Add(result);
    test.Click+=async(s,e)=>{test.Enabled=false;try{string url=server.Text;await System.Threading.Tasks.Task.Run(()=>Agent.CheckConnection(url));result.Text="Соединение и сертификат проверены.";}catch(Exception ex){result.Text="Нет соединения: "+ex.Message+". Можно установить и подключиться позднее.";}finally{test.Enabled=true;}};
-   install.Click+=async(s,e)=>{install.Enabled=false;test.Enabled=false;try{string u=server.Text,t=token.Text,n=name.Text,g=group.Text;bool r=re.Checked;await System.Threading.Tasks.Task.Run(()=>Install(u,t,n,g,r));result.Text="Служба установлена и запущена. Значок трея появится после входа пользователя.";}catch(Exception ex){result.Text=ex.Message;}finally{install.Enabled=true;test.Enabled=true;}};
+   install.Click+=async(s,e)=>{install.Enabled=false;test.Enabled=false;try{string u=server.Text,t=token.Text,n=name.Text,g=group.Text;bool r=re.Checked;await System.Threading.Tasks.Task.Run(()=>Install(u,t,n,g,r));    result.Text="Служба запущена. Настройки подключения сохранены.";
+    try{
+     string explorer=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"explorer.exe");
+     using(var tray=Process.Start(new ProcessStartInfo(explorer,"\""+Path.Combine(Dest,"ContourTray.exe")+"\""){UseShellExecute=false})){}
+    }catch(Exception){result.Text+=" Не удалось открыть значок в трее.";}}catch(Exception ex){result.Text=ex.Message;}finally{install.Enabled=true;test.Enabled=true;}};
   }
   static void Add(Control flow,string label,TextBox box){flow.Controls.Add(new Label{Text=label,AutoSize=true,Margin=new Padding(0,12,0,4)});box.Width=435;flow.Controls.Add(box);}
  }

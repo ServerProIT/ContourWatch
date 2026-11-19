@@ -1,4 +1,4 @@
-param([string]$Version='0.2.2',[string]$Output)
+param([string]$Version='0.2.3',[string]$Output)
 $ErrorActionPreference='Stop'
 $project=Split-Path $PSScriptRoot -Parent
 $bin=Join-Path $project 'dist\windows-x64'
@@ -33,6 +33,7 @@ Table 'LaunchCondition' '`Condition` CHAR(255) NOT NULL, `Description` CHAR(255)
 Table 'AppSearch' '`Property` CHAR(72) NOT NULL, `Signature_` CHAR(72) NOT NULL PRIMARY KEY `Property`, `Signature_`'
 Table 'Signature' '`Signature` CHAR(72) NOT NULL, `FileName` CHAR(255) NOT NULL LOCALIZABLE, `MinVersion` CHAR(20), `MaxVersion` CHAR(20), `MinSize` LONG, `MaxSize` LONG, `MinDate` LONG, `MaxDate` LONG, `Languages` CHAR(255) PRIMARY KEY `Signature`'
 Table 'RegLocator' '`Signature_` CHAR(72) NOT NULL, `Root` SHORT NOT NULL, `Key` CHAR(255) NOT NULL, `Name` CHAR(255), `Type` SHORT PRIMARY KEY `Signature_`'
+Table 'CustomAction' '`Action` CHAR(72) NOT NULL, `Type` SHORT NOT NULL, `Source` CHAR(72), `Target` CHAR(255) PRIMARY KEY `Action`'
 Table 'Shortcut' '`Shortcut` CHAR(72) NOT NULL, `Directory_` CHAR(72) NOT NULL, `Name` CHAR(128) NOT NULL LOCALIZABLE, `Component_` CHAR(72) NOT NULL, `Target` CHAR(255) NOT NULL, `Arguments` CHAR(255), `Description` CHAR(255) LOCALIZABLE, `Hotkey` SHORT, `Icon_` CHAR(72), `IconIndex` SHORT, `ShowCmd` SHORT, `WkDir` CHAR(72) PRIMARY KEY `Shortcut`'
 foreach($name in @('InstallExecuteSequence','InstallUISequence','AdminExecuteSequence','AdminUISequence')){Table $name '`Action` CHAR(72) NOT NULL, `Condition` CHAR(255), `Sequence` SHORT PRIMARY KEY `Action`'}
 $upgrade='{D23A703B-74EC-49A8-8D4D-142F98968502}'
@@ -48,8 +49,8 @@ Row 'MsiLockPermissionsEx' @('PublicData','PUBLICDATA','CreateFolder','D:P(A;OIC
 $files=@('ContourAgent.exe','ContourAgent.exe.config','ContourTray.exe','ContourTray.exe.config','ContourSensorWorker.exe','ContourSensorWorker.exe.config','ContourSetup.exe','ContourUpdater.exe','agent.ico','hardware.zip','hardware-LICENSE.txt','hardware-modules-COPYING.txt','hardware-NOTICE.md','smartctl.exe','drivedb.h','COPYING.txt','AUTHORS.txt','smartmontools-7.5.tar.gz') | ForEach-Object {Get-Item -LiteralPath (Join-Path $bin $_)}
 $files+=Get-ChildItem -LiteralPath "$bin\sensors" -File -Filter '*.dll'
 $ddf=@('.OPTION EXPLICIT','.Set Cabinet=on','.Set Compress=on','.Set CompressionType=LZX','.Set MaxDiskSize=0','.Set CabinetNameTemplate=payload.cab',('.Set DiskDirectoryTemplate="'+$stage+'"'))
-$sequence=0;$agentComponent=$null;$setupComponent=$null;$trayComponent=$null
-foreach($file in $files){$sequence++;$fileId='F'+$sequence.ToString('D4');$component='C'+$sequence.ToString('D4');$relative=$file.FullName.Substring($bin.Length+1);$directory=if($relative.StartsWith('sensors\')){'SENSORS'}else{'INSTALLDIR'};Row 'Component' @($component,(Id $relative),$directory,256,$null,$fileId);Row 'FeatureComponents' @('Agent',$component);$versionInfo=[Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName);$fileVersion=if($versionInfo.FileVersion -match '^\d+\.\d+\.\d+\.\d+$'){$versionInfo.FileVersion}else{$null};Row 'File' @($fileId,$component,$file.Name,[int]$file.Length,$fileVersion,$null,16384,$sequence);$ddf+=('"'+$file.FullName+'" '+$fileId);if($file.Name -eq 'ContourAgent.exe'){$agentComponent=$component};if($file.Name -eq 'ContourSetup.exe'){$setupComponent=$component};if($file.Name -eq 'ContourTray.exe'){$trayComponent=$component}}
+$sequence=0;$agentComponent=$null;$setupComponent=$null;$trayComponent=$null;$trayFile=$null
+foreach($file in $files){$sequence++;$fileId='F'+$sequence.ToString('D4');$component='C'+$sequence.ToString('D4');$relative=$file.FullName.Substring($bin.Length+1);$directory=if($relative.StartsWith('sensors\')){'SENSORS'}else{'INSTALLDIR'};Row 'Component' @($component,(Id $relative),$directory,256,$null,$fileId);Row 'FeatureComponents' @('Agent',$component);$versionInfo=[Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName);$fileVersion=if($versionInfo.FileVersion -match '^\d+\.\d+\.\d+\.\d+$'){$versionInfo.FileVersion}else{$null};Row 'File' @($fileId,$component,$file.Name,[int]$file.Length,$fileVersion,$null,16384,$sequence);$ddf+=('"'+$file.FullName+'" '+$fileId);if($file.Name -eq 'ContourAgent.exe'){$agentComponent=$component};if($file.Name -eq 'ContourSetup.exe'){$setupComponent=$component};if($file.Name -eq 'ContourTray.exe'){$trayComponent=$component;$trayFile=$fileId}}
 Row 'ServiceInstall' @('AgentService','ContourWatch','ContourWatch monitoring agent',16,2,1,$null,$null,'LocalSystem',$null,$null,$agentComponent,'Outbound hardware metrics. No inbound listener.')
 Row 'Registry' @('MsiManaged',2,'Software\ContourWatch','MsiManaged','#1',$agentComponent)
 Row 'ServiceControl' @('AgentControl','ContourWatch',163,$null,1,$agentComponent)
@@ -65,6 +66,9 @@ Row 'LaunchCondition' @('Installed OR FRAMEWORK48 >= "#528040"','Microsoft .NET 
 $actions=@{FindRelatedProducts=25;AppSearch=50;LaunchConditions=100;ValidateProductID=700;CostInitialize=800;FileCost=900;CostFinalize=1000;InstallValidate=1400;InstallInitialize=1500;RemoveExistingProducts=1550;ProcessComponents=1600;UnpublishFeatures=1800;StopServices=1900;DeleteServices=2000;RemoveRegistryValues=2600;RemoveShortcuts=3200;RemoveFiles=3500;RemoveFolders=3600;CreateFolders=3700;InstallFiles=4000;CreateShortcuts=4500;WriteRegistryValues=5000;InstallServices=5800;StartServices=5900;RegisterUser=6000;RegisterProduct=6100;PublishFeatures=6300;PublishProduct=6400;InstallFinalize=6600}
 foreach($entry in $actions.GetEnumerator()){Row 'InstallExecuteSequence' @($entry.Key,$null,[int]$entry.Value)}
 foreach($entry in @{FindRelatedProducts=25;AppSearch=50;LaunchConditions=100;CostInitialize=800;FileCost=900;CostFinalize=1000;ExecuteAction=1300}.GetEnumerator()){Row 'InstallUISequence' @($entry.Key,$null,[int]$entry.Value)}
+# Type 18 runs the installed tray in the MSI client UI. Flag 192 makes it asynchronous.
+Row 'CustomAction' @('LaunchConnectionSetup',210,$trayFile,'--configure')
+Row 'InstallUISequence' @('LaunchConnectionSetup','NOT Installed AND NOT OLDERPRODUCTS AND UILevel >= 4',1400)
 foreach($entry in @{CostInitialize=800;FileCost=900;CostFinalize=1000;InstallValidate=1400;InstallInitialize=1500;InstallAdminPackage=3900;InstallFiles=4000;InstallFinalize=6600}.GetEnumerator()){Row 'AdminExecuteSequence' @($entry.Key,$null,[int]$entry.Value)}
 foreach($entry in @{CostInitialize=800;FileCost=900;CostFinalize=1000;ExecuteAction=1300}.GetEnumerator()){Row 'AdminUISequence' @($entry.Key,$null,[int]$entry.Value)}
 [IO.File]::WriteAllLines((Join-Path $stage 'payload.ddf'),$ddf,[Text.Encoding]::ASCII)

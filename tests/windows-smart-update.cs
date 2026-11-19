@@ -12,6 +12,10 @@ class SmartUpdateTests {
   ata.Remove("endurance_used");Require(SmartCollector.Wear(ata)==null,"must not guess ATA vendor attributes");
   var unknown=SmartCollector.Parse(new Dictionary<string,object>(),0,"/dev/sda");Require(unknown[1]["value"]==null&&unknown[1]["state"].ToString()=="unsupported","HDD unknown is not zero");
   Require(SmartCollector.Parse(nvme,2,"/dev/nvme0")[1]["value"]==null,"SMART IO error cannot report healthy wear");
+  var inaccessible=SmartCollector.Parse(nvme,2,"/dev/sdc");
+  var details=(Dictionary<string,object>)inaccessible[0]["details"];
+  Require(inaccessible[0]["state"].ToString()=="error"&&inaccessible[0]["value"]==null&&details["reason"].ToString().Contains("smartctl"),"SMART device-open error is explained without a fabricated reading");
+  Require(Convert.ToInt32(SmartCollector.Parse(nvme,64,"/dev/nvme0")[0]["value"])==1,"SMART error-log bit remains a warning");
   Require(Convert.ToInt32(SmartCollector.Parse(nvme,8,"/dev/nvme0")[0]["value"])==1,"SMART bitmask warning");
   var method=typeof(UpdateSecurity).GetMethod("VerifyWithKey",BindingFlags.Static|BindingFlags.NonPublic);using(var rsa=new RSACryptoServiceProvider(2048)){rsa.PersistKeyInCsp=false;
    Func<string,string> sign=message=>Convert.ToBase64String(rsa.SignData(Encoding.UTF8.GetBytes(message),CryptoConfig.MapNameToOID("SHA256")));

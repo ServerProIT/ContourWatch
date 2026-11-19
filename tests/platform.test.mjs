@@ -15,3 +15,19 @@ test('single-device endpoint does not scan fleet; history carries graphs without
 test('wear protocol accepts values above 100 as reported, never accepts unavailable zero',()=>{assert.doesNotThrow(()=>validate(packet([metric('disk_wear',127)])));assert.throws(()=>validate(packet([{...metric('disk_wear',0),state:'unsupported'}])),{status:400});});
 test('control contact prevents false offline during delayed measurements, resume has a grace interval',t=>{const s=new Store();t.after(()=>s.close());const d=device(s),now=Date.now();s.controlDevice(d.id,{paused:false},now);assert.equal(s.device(d.id,now).status,'online');s.tick(now+10000);assert.equal(s.events(d.id).length,0);s.tick(now+200000);assert.ok(s.events(d.id).some(e=>e.kind==='offline'&&!e.resolved));s.pauseDevice(d.id,true);s.pauseDevice(d.id,false);assert.equal(s.device(d.id).status,'online');assert.ok(s.events(d.id).every(e=>e.resolved));});
 test('new management APIs reject reader mutations and unauthenticated agent control',async t=>{const s=new Store();t.after(()=>s.close());await s.bootstrapAdmin({password});await s.saveUser({username:'reader',role:'viewer',password},actor);const request=await app(t,s),cookie=(await request('login',{username:'reader',password})).headers.get('set-cookie').split(';')[0],d=device(s);for(const [route,body] of [['devices/'+d.id+'/pause',{enabled:true}],['users/enabled',{id:s.users()[0].id,enabled:false}],['problems',{}],['updates',{enabled:true,channel:'stable',start:0,end:24}]])assert.equal((await request(route,body,cookie)).status,403);assert.equal((await request('control',{},undefined)).status,401);assert.equal((await request('control',{paused:false},undefined,{'X-Device-Id':d.id,authorization:'Bearer '+d.secret})).status,200);assert.equal((await request('update/check',{},undefined,{'X-Device-Id':d.id,authorization:'Bearer '+d.secret})).status,200);});
+
+test('manual agent update checks use the configured channel with automatic updates disabled',async t=>{
+ const s=new Store();t.after(()=>s.close());
+ s.saveUpdatePolicy({enabled:false,channel:'pilot',start:2,end:4});
+ const d=device(s),request=await app(t,s),headers={'X-Device-Id':d.id,authorization:'Bearer '+d.secret};
+ const originalFetch=globalThis.fetch;
+ t.mock.method(globalThis,'fetch',(url,options)=>{
+  if(url.startsWith('http://127.0.0.1:'))return originalFetch(url,options);
+  if(url.startsWith('https://api.github.com/'))return Promise.resolve(Response.json([{draft:false,prerelease:true,tag_name:'agent-0.2.4-pilot.1'}]));
+  assert.match(url,/\/agent-0\.2\.4-pilot\.1\/manifest\.(json|sig)$/);
+  return Promise.resolve(new Response(url.endsWith('.json')?'{}':'test-signature'));
+ });
+ assert.equal((await request('update/check',{manual:true})).status,401);
+ assert.deepEqual(await (await request('update/check',{},null,headers)).json(),{available:false});
+ assert.deepEqual(await (await request('update/check',{manual:true},null,headers)).json(),{available:true,manifest:'{}',signature:'test-signature'});
+});
