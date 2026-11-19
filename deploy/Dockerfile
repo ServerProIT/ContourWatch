@@ -1,4 +1,4 @@
-FROM node:24.11.1-bookworm-slim
+FROM node:24.22.3-bookworm-slim
 WORKDIR /app
 COPY package.json ./
 COPY server ./server

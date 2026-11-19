@@ -3,7 +3,7 @@
 | Компонент | Роль | Лицензионные условия / поставка |
 |---|---|---|
 | .NET Framework 4.8 | Windows runtime | Microsoft; устанавливается отдельно официальным offline installer, не вложен |
-| Node.js 24.11.1 | Сервер | MIT + bundled third-party notices; устанавливается отдельно или Docker image |
+| Node.js 24.22.3 | Сервер | MIT + bundled third-party notices; устанавливается отдельно или Docker image |
 | SQLite, встроенный в Node | База | Public domain, учитывайте уведомления сборки Node |
 | Nginx Proxy Manager | Внешний HTTPS proxy | Пользователь размещает отдельно; не включён в образ панели |
 | smartmontools | SMART adapter | GPL-2.0-or-later; неизменённый smartctl 7.5 x64 включён в Windows-поставку с COPYING/AUTHORS, базой и точными исходниками; на Linux системный пакет |
