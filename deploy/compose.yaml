@@ -2,7 +2,7 @@ name: contourwatch
 
 services:
   server:
-    image: contourwatch:0.4.1
+    image: contourwatch:0.4.2
     build:
       context: ..
       dockerfile: deploy/Dockerfile

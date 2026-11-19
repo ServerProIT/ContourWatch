@@ -1,5 +1,5 @@
 #requires -Version 7.4
-param([string]$Version='0.2.1',[string]$KeyFile,[ValidateSet('stable','pilot')][string]$Channel='stable',[int]$Pilot=1)
+param([string]$Version='0.2.2',[string]$KeyFile,[ValidateSet('stable','pilot')][string]$Channel='stable',[int]$Pilot=1)
 $ErrorActionPreference='Stop'
 $project=Split-Path $PSScriptRoot -Parent
 if(!$KeyFile){$KeyFile=Join-Path $project 'work\release-signing\release-key.dpapi'}

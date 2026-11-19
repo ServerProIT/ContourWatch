@@ -61,10 +61,10 @@ try:
         run('openssl', 'pkey', '-in', str(key), '-pubout', '-out', str(DEST/'update-public.pem'))
         for name in ('update.py','tray.py','agent.svg'):
             shutil.copyfile(REPO/'agent/linux'/name, DEST/name)
-        (DEST/'agent.py').write_text(MOCK.replace('VERSION_HERE', '0.2.0'))
+        (DEST/'agent.py').write_text(MOCK.replace('VERSION_HERE', '0.2.1'))
         shutil.copyfile(REPO/'agent/linux/contourwatch.service', SERVICE)
         run('systemctl','daemon-reload');run('systemctl','start','contourwatch.service')
-        wait(lambda: status('0.2.0'))
+        wait(lambda: status('0.2.1'))
         def release(version, broken=False):
             stage = Path(tempfile.mkdtemp(prefix='stage-', dir=ROOT/'updates'))
             name = 'ContourWatch-'+version+'-linux-any.tar.gz'
@@ -81,11 +81,11 @@ try:
             (ROOT/'launch.txt').write_text(str(stage))
             wait(result.exists)
             return result.read_text()
-        assert 'завершено: 0.2.1' in release('0.2.1')
-        assert status('0.2.1')
-        assert 'Возвращена предыдущая версия' in release('0.2.2',broken=True)
-        assert (ROOT/'updates/blocked-release.txt').read_text() == 'agent-0.2.2'
-        wait(lambda: status('0.2.1'))
+        assert 'завершено: 0.2.2' in release('0.2.2')
+        assert status('0.2.2')
+        assert 'Возвращена предыдущая версия' in release('0.2.3',broken=True)
+        assert (ROOT/'updates/blocked-release.txt').read_text() == 'agent-0.2.3'
+        wait(lambda: status('0.2.2'))
         run('systemctl','is-active','--quiet','contourwatch.service')
         assert (ROOT/'config.json').read_text()=='CI-IDENTITY-MUST-SURVIVE'
         print('PASS actual sandboxed systemd agent launch, signed update, independent installer, failed-start rollback and identity preservation')

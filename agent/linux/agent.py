@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-VERSION = '0.2.1'
+VERSION = '0.2.2'
 DEFAULTS = dict(fastSeconds=60, volumeSeconds=300, smartSeconds=900)
 STOP = threading.Event()
 

@@ -1,4 +1,4 @@
-param([string]$Version='0.2.1',[string]$Output)
+param([string]$Version='0.2.2',[string]$Output)
 $ErrorActionPreference='Stop'
 $project=Split-Path $PSScriptRoot -Parent
 $bin=Join-Path $project 'dist\windows-x64'

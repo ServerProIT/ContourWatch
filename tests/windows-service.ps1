@@ -30,7 +30,7 @@ try {
     $setupPath = $newSetupPath
     Invoke-Setup @('--silent', '--server=https://127.0.0.1:9', "--token-file=`"$tokenPath`"", '--name=CI-WINDOWS-SERVICE', '--group=CI')
     if (!$oldTray.HasExited) { throw 'Upgrade did not stop locked old tray' }
-    if (([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $env:ProgramFiles 'ContourWatch\ContourAgent.exe'))).FileVersion -ne '0.2.1.0') { throw 'Upgrade did not install expected agent version' }
+    if (([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $env:ProgramFiles 'ContourWatch\ContourAgent.exe'))).FileVersion -ne '0.2.2.0') { throw 'Upgrade did not install expected agent version' }
     $tray = Start-Process -FilePath $trayPath -WindowStyle Hidden -PassThru
     Start-Sleep -Seconds 2
     if ($tray.HasExited) { throw 'New tray did not remain running' }
