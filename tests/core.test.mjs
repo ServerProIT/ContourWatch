@@ -26,3 +26,28 @@ test('hourly aggregates survive detailed retention cleanup',t=>{const {s,d}=setu
 test('null and non-object metrics rejected as client errors',()=>{for(const m of [null,1,'text',[]])assert.throws(()=>validate(sample([m]),now),e=>e.status===400);});
 test('duplicate sample is contact but does not increment hourly count',t=>{const {s,d}=setup(t);const p=sample();s.ingest(d.id,p,now);s.ingest(d.id,p,now+60000);assert.equal(s.devices(now+60000)[0].last_seen,now+60000);assert.equal(s.one('SELECT count FROM aggregates').count,1);});
 test('old CPU reading is marked as collection issue even with fresh heartbeat',t=>{const {s,d}=setup(t);s.saveSettings({holdSeconds:0});const m={...metric('temperature',50),measuredAt:new Date(now-200000).toISOString()};s.ingest(d.id,sample([m]),now);assert.equal(s.events(d.id).length,1);assert.match(s.events(d.id)[0].rule,/collector/);});
+
+test('telemetry drops private fields before storage and when reading legacy latest',t=>{
+ const {s,d}=setup(t);
+ const packet=sample([{...metric('smart',0),details:{serial:'PRIVATE',raw:{data:'PRIVATE'},temperature:35}}]);
+ Object.assign(packet,{extra:'PRIVATE',diagnostics:[{message:'PRIVATE'}],hardware:{cpu:'test',user:'PRIVATE'}});
+ s.ingest(d.id,packet,now);
+ for(const value of [s.one('SELECT payload FROM samples').payload,s.one('SELECT latest FROM devices').latest]){
+  assert.ok(!value.includes('PRIVATE'));
+  assert.equal(JSON.parse(value).metrics[0].details.temperature,35);
+ }
+ s.run('UPDATE devices SET latest=? WHERE id=?',JSON.stringify(packet),d.id);
+ assert.ok(!JSON.stringify(s.device(d.id,now)).includes('PRIVATE'));
+});
+
+test('legacy Linux volume paths get a stable device-specific alias in storage and graphs',t=>{
+ const {s,d}=setup(t);
+ const packet=sample([{...metric('volume',21),id:'volume:/home/PRIVATE',name:'/home/PRIVATE'}]);
+ s.ingest(d.id,packet,now);
+ const first=s.device(d.id).latest.metrics[0];
+ assert.match(first.id,/^volume:[0-9a-f]{16}$/);
+ assert.doesNotMatch(s.one('SELECT payload FROM samples').payload,/PRIVATE/);
+ s.run('UPDATE samples SET payload=?',JSON.stringify(packet));
+ assert.equal(s.historySeries(d.id)[0].metrics[0].id,first.id);
+ assert.equal(s.historySeries(d.id)[0].metrics[0].name,first.name);
+});

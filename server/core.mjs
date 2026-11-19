@@ -1,5 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
-import {randomBytes,randomUUID,createHash,timingSafeEqual} from 'node:crypto';
+import {randomBytes,randomUUID,createHash,createHmac,timingSafeEqual} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {management} from './management.mjs';
 import {platform,migratePlatform} from './platform.mjs';
@@ -10,6 +10,31 @@ export const hash=s=>createHash('sha256').update(s).digest('hex');
 export const equal=(a,b)=>{if(typeof a!=='string'||typeof b!=='string')return false;const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
 export const defaults={fastSeconds:60,volumeSeconds:300,smartSeconds:900,offlineSeconds:180,ramHigh:90,ramClear:85,tempHigh:85,tempClear:80,gpuHigh:85,gpuClear:80,volumeHigh:90,volumeClear:85,holdSeconds:120,historyDays:30,aggregateDays:365,autoUpdate:true,updateWindowStart:0,updateWindowEnd:24};
 export const capabilities={extendedSensors:true,diskWear:true,control:true};
+function scalarFields(value, keys) {
+ if (!value || typeof value !== 'object') return {};
+ return Object.fromEntries(keys.filter(key => Object.hasOwn(value,key) && ['string','number','boolean'].includes(typeof value[key])).map(key => [key,value[key]]));
+}
+const detailFields='totalBytes availableBytes usedBytes freeBytes filesystem capacityBytes temperature powerOnHours percentageUsed criticalWarning mediaErrors reallocated pending uncorrectable smartctlExit wearSource interface model diskId sourceField hardware hardwareType sensorType pawnIoInstalled reason errorType pciBusId'.split(' ');
+function telemetry(packet) {
+ const result=scalarFields(packet,['batchId','measuredAt','version','updateStatus']);
+ if(Array.isArray(packet.diagnostics))result.diagnostics=packet.diagnostics.slice(-24).filter(e=>
+  e && typeof e.component==='string' && /^(agent|service|diagnostics|delivery|control|updater|collector\.(ram|volume|sensors|gpu|smart))$/.test(e.component) &&
+  ['metric.state','collector.empty','snapshot.failed','update.failed','recovery.configure.failed','diagnostic','state.changed','retry.scheduled'].includes(e.event) &&
+  ['info','warning','error'].includes(e.level) && typeof e.time==='string' && Number.isFinite(Date.parse(e.time))
+ ).map(e=>({time:new Date(e.time).toISOString(),component:e.component,event:e.event,level:e.level}));
+ result.hardware=scalarFields(packet.hardware,['architecture','virtual','cpu']);
+ result.metrics=packet.metrics.map(metric=>{
+  const row=scalarFields(metric,['id','name','kind','state','source','measuredAt','unit']);
+  row.value=typeof metric.value==='number'?metric.value:null;
+  const details=metric.details;
+  if(details && typeof details==='object'){
+   row.details=scalarFields(details,detailFields);
+   if(Array.isArray(details.attributes))row.details.attributes=details.attributes.slice(0,64).map(a=>scalarFields(a,['id','name','value','worst','thresh','raw']));
+  }else if(typeof details==='string')row.details=details;
+  return row;
+ });
+ return result;
+}
 export function validate(p,now=Date.now()){
  if(!p||typeof p!=='object'||Array.isArray(p))fail(400,'Ожидается объект');
  textField(p.batchId,'batchId',80); const t=Date.parse(p.measuredAt);
@@ -33,7 +58,7 @@ export function validate(p,now=Date.now()){
 export function settingsPatch(p,current=defaults){
  if(!p||typeof p!=='object'||Array.isArray(p))fail(400,'Некорректные настройки');
  const bounds={fastSeconds:[30,3600],volumeSeconds:[60,86400],smartSeconds:[300,86400],offlineSeconds:[90,86400],ramHigh:[1,100],ramClear:[0,99],tempHigh:[30,120],tempClear:[0,119],gpuHigh:[30,120],gpuClear:[0,119],volumeHigh:[1,100],volumeClear:[0,99],holdSeconds:[0,86400],historyDays:[1,365],aggregateDays:[1,3650],updateWindowStart:[0,23],updateWindowEnd:[1,24]};
- for(const [k,v]of Object.entries(p)){if(k==='autoUpdate'){if(typeof v!=='boolean')fail(400,'autoUpdate: boolean');}else if(!bounds[k]||!Number.isInteger(v)||v<bounds[k][0]||v>bounds[k][1])fail(400,'Недопустимая настройка '+k);}
+ for(const [k,v]of Object.entries(p)){if(k==='autoUpdate'){if(typeof v!=='boolean')fail(400,'autoUpdate: boolean');}else if(!Object.hasOwn(bounds,k)||!Number.isInteger(v)||v<bounds[k][0]||v>bounds[k][1])fail(400,'Недопустимая настройка '+k);}
  const s={...current,...p};for(const k of ['ram','temp','gpu','volume'])if(s[k+'Clear']>=s[k+'High'])fail(400,'Порог восстановления должен быть ниже порога срабатывания');
  if(s.updateWindowStart>=s.updateWindowEnd)fail(400,'Окно установки должно быть в пределах суток UTC');return s;
 }
@@ -50,8 +75,29 @@ export class Store{
  const t=this.one('SELECT * FROM tokens WHERE hash=?',hash(p.token));if(!t||t.expires<=now||t.remaining<1)fail(403,'Токен истёк или использован');
  const id=requestedId||randomUUID(),secret=requestedSecret||randomBytes(32).toString('base64url');this.run('INSERT INTO devices(id,secret,name,grp,os,version,created) VALUES(?,?,?,?,?,?,?)',id,hash(secret),name,group,os,version,now);this.run('INSERT INTO device_groups VALUES(?,?)',id,this.ensureGroup(group).id);this.run('UPDATE tokens SET remaining=remaining-1 WHERE hash=?',hash(p.token));return {id,secret,settings:this.settings()};});}
  auth(id,secret){const d=this.one('SELECT * FROM devices WHERE id=?',id||'');if(!d||d.revoked||!equal(d.secret,hash(secret||'')))fail(401,'Учётные данные отозваны или неверны');return d;}
+ metricAlias(id,metric,key){
+  if(typeof metric!=='string'||!metric.startsWith('volume:/')||metric==='volume:/')return metric;
+  key??=this.one('SELECT secret FROM devices WHERE id=?',id).secret;
+  return 'volume:'+createHmac('sha256',key).update(metric).digest('hex').slice(0,16);
+ }
+ privateVolumes(id,metrics){
+  let key;
+  for(const row of metrics){
+   if(row.kind!=='volume'||typeof row.id!=='string'||!row.id.startsWith('volume:/')||row.id==='volume:/')continue;
+   key??=this.one('SELECT secret FROM devices WHERE id=?',id).secret;
+   row.id=this.metricAlias(id,row.id,key);
+   row.name='Volume '+row.id.slice(7);
+  }
+  return metrics;
+ }
+ privatePacket(id,packet){
+  const result=telemetry(packet);
+  this.privateVolumes(id,result.metrics);
+  return result;
+ }
  ingest(id,p,now=Date.now()){const t=validate(p,now);return this.transaction(()=>{
  const d=this.one('SELECT * FROM devices WHERE id=?',id);if(!d||d.revoked)fail(401,'Устройство недоступно');if(d.paused){this.run('UPDATE devices SET control_seen=? WHERE id=?',now,id);return {accepted:true,paused:true,settings:this.settings(),capabilities};}
+ p=this.privatePacket(id,p);
  const result=this.run('INSERT OR IGNORE INTO samples VALUES(?,?,?,?,?)',id,p.batchId,t,now,JSON.stringify(p));
  if(result.changes){if(!d.measured||t>d.measured){this.run('UPDATE devices SET measured=?,latest=?,version=? WHERE id=?',t,JSON.stringify(p),String(p.version||d.version).slice(0,40),id);
  // Replayed historical samples never open current alerts.
@@ -64,10 +110,10 @@ export class Store{
  else if(e)this.run('UPDATE events SET resolved=? WHERE id=?',now,e.id);}
  evaluate(id,p,now){return this.evaluateProblems(id,p,now);}
  tick(now=Date.now()){for(const d of this.all('SELECT id FROM devices WHERE revoked=0 AND maintenance=0 AND paused=0'))this.evaluateProblems(d.id,null,now,true);}
- decorate(d,now){if(!d)return null;const groups=this.all('SELECT g.* FROM groups g JOIN device_groups dg ON dg.grp=g.id WHERE dg.device=? ORDER BY g.name',d.id),counts={normal:0,warning:0,critical:0};for(const e of this.all('SELECT severity,count(*) n FROM events WHERE device=? AND opened IS NOT NULL AND resolved IS NULL GROUP BY severity',d.id))counts[e.severity]=e.n;return {...d,groups,grp:groups.map(g=>g.name).join(', ')||'Без группы',latest:d.latest?JSON.parse(d.latest):null,status:d.revoked?'revoked':d.paused?'paused':d.maintenance?'maintenance':!Math.max(d.last_seen||0,d.control_seen||0)||now-Math.max(d.last_seen||0,d.control_seen||0)>this.settings().offlineSeconds*1000?'offline':'online',problemCounts:counts,problems:d.paused||d.revoked||d.maintenance?0:Object.values(counts).reduce((a,b)=>a+b,0)};}
+ decorate(d,now){if(!d)return null;const groups=this.all('SELECT g.* FROM groups g JOIN device_groups dg ON dg.grp=g.id WHERE dg.device=? ORDER BY g.name',d.id),counts={normal:0,warning:0,critical:0};for(const e of this.all('SELECT severity,count(*) n FROM events WHERE device=? AND opened IS NOT NULL AND resolved IS NULL GROUP BY severity',d.id))counts[e.severity]=e.n;return {...d,groups,grp:groups.map(g=>g.name).join(', ')||'Без группы',latest:d.latest?this.privatePacket(d.id,JSON.parse(d.latest)):null,status:d.revoked?'revoked':d.paused?'paused':d.maintenance?'maintenance':!Math.max(d.last_seen||0,d.control_seen||0)||now-Math.max(d.last_seen||0,d.control_seen||0)>this.settings().offlineSeconds*1000?'offline':'online',problemCounts:counts,problems:d.paused||d.revoked||d.maintenance?0:Object.values(counts).reduce((a,b)=>a+b,0)};}
  device(id,now=Date.now()){this.evaluateProblems(id,null,now,true);return this.decorate(this.one('SELECT id,name,grp,os,version,last_seen,measured,latest,maintenance,revoked,paused,control_seen,pause_confirmed FROM devices WHERE id=?',id),now);}
  devices(now=Date.now()){this.tick(now);return this.all('SELECT id,name,grp,os,version,last_seen,measured,latest,maintenance,revoked,paused,control_seen,pause_confirmed FROM devices ORDER BY name').map(d=>this.decorate(d,now));}
- history(id,limit=360){return this.all('SELECT measured,payload FROM samples WHERE device=? ORDER BY measured DESC LIMIT ?',id,limit).reverse().map(r=>JSON.parse(r.payload));}
+ history(id,limit=360){return this.all('SELECT measured,payload FROM samples WHERE device=? ORDER BY measured DESC LIMIT ?',id,limit).reverse().map(r=>this.privatePacket(id,JSON.parse(r.payload)));}
  events(id){return this.all('SELECT * FROM events WHERE opened IS NOT NULL'+(id?' AND device=?':'')+' ORDER BY started DESC LIMIT 1000',...(id?[id]:[]));}
  maintain(id,on){if(typeof on!=='boolean')fail(400,'Нужно логическое значение');if(!this.run('UPDATE devices SET maintenance=? WHERE id=?',on?1:0,id).changes)fail(404,'Устройство не найдено');}
  aggregate(id,p,t){const values=k=>p.metrics.filter(m=>m.kind===k&&m.state==='ok').map(m=>m.value);const r=values('ram'),temp=values('temperature');const ram=r.length?Math.max(...r):null,temperature=temp.length?Math.max(...temp):null;

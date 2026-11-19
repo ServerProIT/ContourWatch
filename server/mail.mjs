@@ -50,7 +50,7 @@ export async function sendMail(config,{recipients,subject,text}){
   await command('MAIL FROM:<'+from+'>',[250]);for(const r of recipients)await command('RCPT TO:<'+r+'>',[250,251]);await command('DATA',[354]);
   const encoded=Buffer.from(String(text),'utf8').toString('base64').match(/.{1,76}/g)?.join('\r\n')||'';
   const safeSubject=String(subject).replace(/[\r\n]/g,' ').slice(0,90),words=Array.from(safeSubject).reduce((a,c)=>{if(Buffer.byteLength(a.at(-1)+c)>36)a.push('');a[a.length-1]+=c;return a;},['']).map(s=>'=?UTF-8?B?'+Buffer.from(s).toString('base64')+'?=').join('\r\n ');
-  socket.write(`From: <${from}>\r\nTo: ${recipients.map(r=>'<'+r+'>').join(',\r\n ')}\r\nSubject: ${words}\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: <${randomUUID()}@contourwatch.local>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${encoded}\r\n.\r\n`);await expect([250]);
+  socket.write(`From: <${from}>\r\nTo: undisclosed-recipients:;\r\nSubject: ${words}\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: <${randomUUID()}@contourwatch.local>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${encoded}\r\n.\r\n`);await expect([250]);
   // DATA 250 is the delivery acknowledgement. QUIT loss must not trigger a duplicate.
   socket.end('QUIT\r\n');
  }finally{clearTimeout(deadline);socket.destroy();reader.detach();}
@@ -66,13 +66,13 @@ export function notificationWorker(store,{config=null,send=sendMail}={}){
     if(stopped)break;
     const c=store.channels().find(c=>c.id===q.channel),r=store.rules().find(r=>r.id===q.rule),e=q.event&&store.one('SELECT e.*,d.name,d.revoked,d.maintenance,d.paused FROM events e JOIN devices d ON d.id=e.device WHERE e.id=?',q.event);
     const membership=e?store.all('SELECT grp FROM device_groups WHERE device=?',e.device).map(g=>g.grp):[];
-    if(!c?.enabled||q.event&&(!r?.enabled||!r.channels.includes(q.channel)||!e||e.revoked||e.maintenance||e.paused||r.problemRules?.length&&!r.problemRules.includes(e.problem_rule)||q.phase==='open'&&e.resolved||r.devices.length&&!r.devices.includes(e.device)||r.groups.length&&!r.groups.some(g=>membership.includes(g))||!r.problemRules?.length&&!r.kinds.includes(e.kind||e.rule.split(':')[0])||r.metricId&&r.metricId!==(e.metric_id||e.rule.slice(e.rule.indexOf(':')+1))||q.phase==='recovery'&&!r.recovery)){
+    if(!c?.enabled||q.event&&(!r?.enabled||!r.channels.includes(q.channel)||!e||e.revoked||e.maintenance||e.paused||r.problemRules?.length&&!r.problemRules.includes(e.problem_rule)||q.phase==='open'&&e.resolved||r.devices.length&&!r.devices.includes(e.device)||r.groups.length&&!r.groups.some(g=>membership.includes(g))||!r.problemRules?.length&&!r.kinds.includes(e.kind||e.rule.split(':')[0])||r.metricId&&store.metricAlias(e.device,r.metricId)!==store.metricAlias(e.device,e.metric_id||e.rule.slice(e.rule.indexOf(':')+1))||q.phase==='recovery'&&!r.recovery)){
      store.run("UPDATE notification_queue SET status='cancelled' WHERE id=?",q.id);continue;
     }
     if(!config){store.run("UPDATE notification_queue SET error='SMTP_NOT_CONFIGURED',next_try=? WHERE id=?",now+60000,q.id);continue;}
     if(e&&q.phase==='open'&&now<e.opened+r.delaySeconds*1000){store.run('UPDATE notification_queue SET next_try=? WHERE id=?',e.opened+r.delaySeconds*1000,q.id);continue;}
     try{
-     await send(config,{recipients:c.recipients,subject:q.phase==='test'?'Контур: проверка почты':`${q.phase==='recovery'?'Восстановлено':'Проблема'}: ${e.name}`,text:e?`Устройство: ${e.name}\nПроблема: ${e.title}\nПравило: ${e.rule}\nСостояние: ${q.phase==='recovery'?'Восстановлено':'Активно'}\nНачало: ${new Date(e.opened).toISOString()}\n${e.resolved?'Восстановление: '+new Date(e.resolved).toISOString():''}`:'Проверочное уведомление ContourWatch. Доставка работает.'});
+     await send(config,{recipients:c.recipients,subject:q.phase==='test'?'Контур: проверка почты':q.phase==='recovery'?'Контур: Восстановлено':'Контур: Проблема',text:e?'Подробности события доступны после входа в панель ContourWatch.':'Проверочное уведомление ContourWatch. Доставка работает.'});
      store.run("UPDATE notification_queue SET status='sent',sent=?,attempts=attempts+1,error=NULL WHERE id=?",Date.now(),q.id);
     }catch(err){const code=/^SMTP_(?:\d{3}|[A-Z_]+)$/.test(err.message)?err.message:'SMTP_CONNECTION';store.run("UPDATE notification_queue SET status=?,attempts=attempts+1,error=?,next_try=? WHERE id=?",q.attempts>=7?'failed':'pending',code,now+Math.min(3600000,30000*2**q.attempts),q.id);}
    }

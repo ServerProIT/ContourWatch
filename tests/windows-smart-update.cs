@@ -3,6 +3,9 @@ class SmartUpdateTests {
  static void Require(bool ok,string why){if(!ok)throw new Exception(why);}
  static void Reject(Action action,string why){try{action();}catch{return;}throw new Exception("Accepted "+why);}
  static int Main(string[] args){try{
+  var queued=Agent.Json.Deserialize<Dictionary<string,object>>(@"{""diagnostics"":[""PRIVATE""],""metrics"":[{""details"":{""serial"":""PRIVATE"",""raw"":{""data"":""PRIVATE""},""temperature"":33}}]}");
+  Agent.CleanQueuedTelemetry(queued);
+  Require(!Agent.Json.Serialize(queued).Contains("PRIVATE")&&Agent.Json.Serialize(queued).Contains("temperature"),"queued telemetry privacy");
   var nvme=Agent.Json.Deserialize<Dictionary<string,object>>(@"{""smart_status"":{""passed"":true},""nvme_smart_health_information_log"":{""percentage_used"":127}}");
   var list=SmartCollector.Parse(nvme,0,"/dev/nvme0");Require(list.Count==2&&list[1]["kind"].ToString()=="disk_wear"&&Convert.ToDouble(list[1]["value"])==127,"NVMe wear >100");
   var ata=Agent.Json.Deserialize<Dictionary<string,object>>(@"{""endurance_used"":{""current_percent"":23},""ata_smart_attributes"":{""table"":[{""id"":202,""value"":77}]}}");Require(SmartCollector.Wear(ata)==23,"canonical ATA endurance");

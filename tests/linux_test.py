@@ -41,7 +41,19 @@ class LinuxLogic(unittest.TestCase):
         m = a.parse_smart(raw, 8, '/dev/sda')
         self.assertEqual(m['state'], 'ok')
         self.assertEqual(m['value'], 1)
-        self.assertEqual(m['details']['raw'], raw)
+        self.assertNotIn('raw', m['details'])
+        self.assertNotIn('SERIAL', json.dumps(m))
+
+    def test_queue_privacy(self):
+        sample = {'metrics': [dict(kind='volume', id='volume:/home/PRIVATE', name='/home/PRIVATE'),
+                              dict(kind='smart', details=dict(serial='PRIVATE', raw=dict(path='PRIVATE'), temperature=30))],
+                  'diagnostics': ['PRIVATE']}
+        a.clean_for_delivery(sample, 'device-secret')
+        before = json.dumps(sample)
+        self.assertNotIn('PRIVATE', before)
+        a.clean_for_delivery(sample, 'device-secret')
+        self.assertEqual(json.dumps(sample), before)
+        self.assertEqual(sample['metrics'][1]['details']['temperature'], 30)
 
     def test_smart_io_error(self):
         self.assertEqual(a.parse_smart({}, 2, '/dev/sda')['state'], 'error')
@@ -94,6 +106,19 @@ class LinuxLogic(unittest.TestCase):
             agent.enqueue({'data': 'x'*1000000})
             self.assertEqual(len(list(agent.queue.glob('*.json'))), 1500)
             agent.pool.shutdown()
+
+    def test_new_registration_keeps_old_queue_private(self):
+        with tempfile.TemporaryDirectory() as root:
+            first = a.Agent(root)
+            first.enqueue({'batchId': 'previous'})
+            first.pool.shutdown()
+            a.atomic(first.root/'config.json', {'queueScope': 'a'*32})
+            new = a.Agent(root)
+            self.assertNotEqual(first.queue, new.queue)
+            self.assertFalse(list(new.queue.glob('*.json')))
+            self.assertEqual(len(list(first.queue.glob('*.json'))), 1)
+            self.assertNotIn('PRIVATE', json.dumps(new.public_metric(dict(kind='volume', id='volume:/home/PRIVATE', name='/home/PRIVATE'))))
+            new.pool.shutdown()
 
     def test_failed_delivery_keeps_queue(self):
         with tempfile.TemporaryDirectory() as t:

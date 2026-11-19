@@ -24,7 +24,8 @@ export const problems={
   for(const r of this.problemRules()){
    if((r.kind==='offline')!==offlineOnly)continue;
    if(!r.enabled||r.devices.length&&!r.devices.includes(id)||r.groups.length&&!r.groups.some(g=>groups.includes(g))){this.run('UPDATE events SET resolved=? WHERE device=? AND problem_rule=? AND resolved IS NULL',now,id,r.id);continue;}
-   const metrics=r.kind==='offline'?[{id:'offline',name:d.name,kind:'offline'}]:(p?.metrics||[]).filter(m=>(r.kind==='collector'||m.kind===r.kind)&&(!r.metricId||m.id===r.metricId)&&!(r.legacy&&r.kind==='collector'&&m.kind==='disk_wear'&&m.state==='unsupported'));
+   const target=this.metricAlias(id,r.metricId,d.secret);
+   const metrics=r.kind==='offline'?[{id:'offline',name:d.name,kind:'offline'}]:(p?.metrics||[]).filter(m=>(r.kind==='collector'||m.kind===r.kind)&&(!target||m.id===target)&&!(r.legacy&&r.kind==='collector'&&m.kind==='disk_wear'&&m.state==='unsupported'));
    for(const m of metrics){const key=r.legacy?(r.kind==='offline'?'offline':r.kind==='collector'?'collector:'+m.id:m.kind+':'+m.id):'problem:'+r.id+':'+m.id;
     const active=this.one('SELECT id FROM events WHERE device=? AND rule=? AND resolved IS NULL',id,key),interval=['smart','disk_wear'].includes(m.kind)?s.smartSeconds:m.kind==='volume'?s.volumeSeconds:s.fastSeconds,fresh=m.kind==='offline'||now-Date.parse(m.measuredAt||p?.measuredAt)<=Math.max(interval*2,180)*1000;
     const threshold=r.global?s[r.global+'High']:r.threshold,clear=r.global?s[r.global+'Clear']:r.clearThreshold,hold=r.global||r.kind==='collector'&&r.legacy&&!r.configured?s.holdSeconds:r.holdSeconds;

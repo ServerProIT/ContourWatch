@@ -4,6 +4,8 @@ import argparse
 import concurrent.futures
 import datetime as dt
 import fcntl
+import hmac
+import hashlib
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -104,13 +106,13 @@ def parse_smart(raw, code, device):
     state = 'error' if code & 7 else 'ok' if known else 'unsupported'
     return metric('disk:'+device, 'smart', raw.get('model_name', device), state,
                   int(bool(bad)) if state == 'ok' else None, 'risk', 'smartctl',
-                  dict(model=raw.get('model_name'), serial=raw.get('serial_number'),
+                  dict(model=raw.get('model_name'),
                        interface=raw.get('device', {}).get('protocol'),
                        capacityBytes=raw.get('user_capacity', {}).get('bytes'),
                        temperature=raw.get('temperature', {}).get('current'),
                        powerOnHours=raw.get('power_on_time', {}).get('hours'),
                        reallocated=attrs.get(5), pending=attrs.get(197), uncorrectable=attrs.get(198),
-                       percentageUsed=wear_percent(raw), mediaErrors=nvme.get('media_errors'), raw=raw))
+                       percentageUsed=wear_percent(raw), mediaErrors=nvme.get('media_errors')))
 
 def wear_percent(raw):
     value = raw.get('endurance_used', {}).get('current_percent')
@@ -185,12 +187,24 @@ def endpoint(server, path, local=False):
         raise ValueError('Нужен HTTPS адрес сервера без пути и учётных данных')
     return server.rstrip('/') + path
 
+def clean_for_delivery(payload, secret):
+    payload.pop('diagnostics', None)
+    for m in payload.get('metrics', []):
+        details = m.get('details')
+        if isinstance(details, dict):
+            for field in ('serial', 'raw', 'message'):
+                details.pop(field, None)
+        if m.get('kind') == 'volume' and m.get('id', '').startswith('volume:/') and m['id'] != 'volume:/':
+            alias = hmac.digest(hashlib.sha256(secret.encode()).hexdigest().encode(), m['id'].encode(), 'sha256').hex()[:16]
+            m.update(id='volume:'+alias, name='Volume '+alias)
+
+
 def post(config, path, body):
     headers = {'Content-Type': 'application/json'}
     if config.get('secret'):
         headers.update({'Authorization': 'Bearer '+config['secret'], 'X-Device-Id': config['id']})
     ctx = ssl.create_default_context(cafile=config.get('caFile'))
-    opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ctx))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(), urllib.request.HTTPSHandler(context=ctx))
     request = urllib.request.Request(endpoint(config['server'], path, config.get('localTest', False)),
                                      json.dumps(body, allow_nan=False).encode(), headers)
     with opener.open(request, timeout=12) as response:
@@ -270,7 +284,16 @@ class Agent:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o711)
         self.queue = self.root/'queue'
         self.queue.mkdir(exist_ok=True, mode=0o700)
+        config_file = self.root/'config.json'
+        if config_file.exists():
+            scope = json.loads(config_file.read_text()).get('queueScope')
+            if scope is not None:
+                if not isinstance(scope, str) or not re.fullmatch('[0-9a-f]{32}', scope):
+                    raise ValueError('invalid queue scope')
+                self.queue = self.queue/scope
+                self.queue.mkdir(exist_ok=True, mode=0o700)
         self.settings, self.cache, self.due, self.jobs = dict(DEFAULTS), {}, {}, {}
+        self.diagnostic_key = secrets.token_bytes(32)
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self.paused, self.disk_wear, self.next_control = False, False, 0
         self.next_update, self.update_thread = 0, None
@@ -342,7 +365,7 @@ class Agent:
             if not config.get('requestId'):
                 config.update(requestId=str(uuid.uuid4()), deviceSecret=secrets.token_urlsafe(32))
                 atomic(self.root/'config.json', config)
-            reply = post(config, '/api/register', dict(token=config['token'], name=config.get('name', platform.node()),
+            reply = post(config, '/api/register', dict(token=config['token'], name=config.get('name', 'PC-'+uuid.uuid4().hex[:12]),
                          group=config.get('group', 'Без группы'), os=os_name(), version=VERSION,
                          requestId=config['requestId'], deviceSecret=config['deviceSecret']))
             config.update(id=reply['id'], secret=reply['secret'])
@@ -359,6 +382,7 @@ class Agent:
             if dt.datetime.fromisoformat(payload['measuredAt']).timestamp() < time.time()-7*86400:
                 f.unlink()
                 continue
+            clean_for_delivery(payload, config['secret'])
             reply = post(config, '/api/ingest', payload)
             if reply.get('paused'):
                 self.paused = True
@@ -374,10 +398,16 @@ class Agent:
         atomic(public/'status.json', dict(state=state, version=VERSION, updated=iso(),
                queue=len(list(self.queue.glob('*.json'))), server=server), 0o644)
 
+    def public_metric(self, metric):
+        if metric.get('kind') == 'volume' and metric.get('id', '').startswith('volume:/') and metric['id'] != 'volume:/':
+            ident = hmac.digest(self.diagnostic_key, metric['id'].encode(), 'sha256').hex()[:12]
+            metric = dict(metric, id='volume:'+ident, name='Volume '+ident)
+        return diagnostic_projection(metric)
+
     def record_diagnostics(self, kind):
         if not hasattr(self, 'diagnostic_collectors'):
             self.diagnostic_collectors, self.diagnostic_states = {}, {}
-        projected = [diagnostic_projection(m) for m in self.cache[kind][:128]]
+        projected = [self.public_metric(m) for m in self.cache[kind][:128]]
         for m in projected:
             key, signature = (kind, m['id']), (m['state'], m['reason'])
             if self.diagnostic_states.get(key) != signature:
@@ -492,7 +522,7 @@ def main():
     parser.add_argument('--reregister', action='store_true')
     parser.add_argument('--server')
     parser.add_argument('--token-file')
-    parser.add_argument('--name', default=platform.node())
+    parser.add_argument('--name', default='PC-'+uuid.uuid4().hex[:12])
     parser.add_argument('--group', default='Без группы')
     args = parser.parse_args()
     if args.collect:
@@ -518,6 +548,8 @@ def main():
             config = json.loads(path.read_text()) if path.exists() else {}
             if config.get('secret') and config.get('server', '').rstrip('/') != args.server.rstrip('/') and not args.reregister:
                 parser.error('При смене сервера нужен --reregister и новый токен')
+            if args.reregister or config.get('server', '').rstrip('/') != args.server.rstrip('/'):
+                config['queueScope'] = uuid.uuid4().hex
             config.update(server=args.server, name=args.name, group=args.group)
             if not config.get('secret') or args.reregister:
                 if not args.token_file:

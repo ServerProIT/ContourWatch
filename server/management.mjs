@@ -72,7 +72,7 @@ export const management={
   const rules=this.rules().filter(r=>r.enabled),channels=new Set(this.channels().filter(c=>c.enabled).map(c=>c.id));
   for(const e of this.all('SELECT e.*,d.name device_name,d.maintenance,d.revoked,d.paused FROM events e JOIN devices d ON d.id=e.device WHERE e.opened IS NOT NULL AND d.revoked=0 AND d.maintenance=0 AND d.paused=0')){
    const memberships=this.all('SELECT grp FROM device_groups WHERE device=?',e.device).map(g=>g.grp),kind=e.kind||e.rule.split(':')[0],metricId=e.metric_id||(e.rule.includes(':')?e.rule.slice(e.rule.indexOf(':')+1):'');
-   for(const r of rules){if((r.problemRules?.length?!r.problemRules.includes(e.problem_rule):!r.kinds.includes(kind))||r.devices.length&&!r.devices.includes(e.device)||r.groups.length&&!r.groups.some(g=>memberships.includes(g))||r.metricId&&r.metricId!==metricId)continue;
+   for(const r of rules){if((r.problemRules?.length?!r.problemRules.includes(e.problem_rule):!r.kinds.includes(kind))||r.devices.length&&!r.devices.includes(e.device)||r.groups.length&&!r.groups.some(g=>memberships.includes(g))||r.metricId&&this.metricAlias(e.device,r.metricId)!==this.metricAlias(e.device,metricId))continue;
     for(const c of r.channels){if(!channels.has(c))continue;
      const enqueue=phase=>this.run("INSERT INTO notification_queue(id,event,rule,channel,phase,next_try,created) VALUES(?,?,?,?,?,?,?) ON CONFLICT(event,rule,channel,phase) DO UPDATE SET status='pending',attempts=0,next_try=excluded.next_try,error=NULL WHERE notification_queue.status='cancelled'",randomUUID(),e.id,r.id,c,phase,now,now);
      if(!e.resolved&&now>=e.opened+r.delaySeconds*1000)enqueue('open');
